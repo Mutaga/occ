@@ -1,0 +1,67 @@
+body {
+    background-image: url('../images/occ-featured-images.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    color: #212529;
+    font-family: 'Arial', sans-serif;
+}
+
+.card {
+    border: none;
+    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.9);
+}
+
+.btn-primary {
+    background-color: #007bff;
+    border-color: #007bff;
+    transition: background-color 0.2s;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+    border-color: #0056b3;
+}
+
+.form-control {
+    border-radius: 5px;
+}
+
+.alert {
+    border-radius: 5px;
+}
+
+.sidebar {
+    background-color: #000;
+    color: #fff;
+    width: 250px;
+    height: 100vh;
+    position: fixed;
+    padding: 20px;
+}
+
+.sidebar .nav-link {
+    color: #fff;
+    padding: 10px 0;
+    text-decoration: none;
+    display: block;
+}
+
+.sidebar .nav-link:hover,
+.sidebar .nav-link.active {
+    color: #007bff;
+}
+
+.content {
+    margin-left: 250px;
+    width: calc(100% - 250px);
+    background-color: rgba(255, 255, 255, 0.9);
+    min-height: 100vh;
+}
+
+.table {
+    background-color: #fff;
+    border-radius: 5px;
+}

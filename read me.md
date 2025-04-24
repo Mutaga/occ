@@ -1,5 +1,5 @@
-grok link: 
-grok username : 
+grok link: https://grok.com/chat/c42d607a-443d-4ca0-b08a-935cb453fb3a?referrer=website%2F
+grok username : guillaume.nzk@gmail.com
 
 Structure initiales  des fichiers : 
 
@@ -9,16 +9,15 @@ occ/
 │   │   ├── css/
 │   │   │   └── bootstrap.min.css
 │   │   └── js/
-│   │       └── bootstrap.bundle.min.js
+│   │       └── bootstrap.min.js
 │   ├── jquery/
 │   │   └── jquery.min.js
 │   └── css/
 │       └── custom.css
 ├── uploads/
-│   └── (fichiers PDF des membres, ex: 00001_Dupont.pdf)
 ├── config.php
-├── index.php
 ├── auth.php
+├── index.php
 ├── members.php
 ├── children.php
 ├── formations.php

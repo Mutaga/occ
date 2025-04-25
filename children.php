@@ -29,12 +29,26 @@ $success = null;
 // Liste des valeurs valides
 $valid_sexes = ['Masculin', 'Féminin'];
 
+// Fonction pour calculer l'âge et la catégorie
+function calculateAgeAndCategory($date_naissance, $current_date = '2025-04-25') {
+    if (empty($date_naissance)) {
+        return ['age' => null, 'category' => null];
+    }
+    $birth_date = new DateTime($date_naissance);
+    $current_date = new DateTime($current_date);
+    $interval = $birth_date->diff($current_date);
+    $age = $interval->y;
+    $category = ($age < 13) ? 'Enfant' : ($age <= 18 ? 'Teenager' : null);
+    return ['age' => $age, 'category' => $category];
+}
+
 // Ajout d'un enfant
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'diacre') && !isset($_POST['action'])) {
     try {
         $nom = trim($_POST['nom'] ?? '') ?: null;
         $prenom = trim($_POST['prenom'] ?? '') ?: null;
         $sexe = trim($_POST['sexe'] ?? '') ?: null;
+        $date_naissance = trim($_POST['date_naissance'] ?? '') ?: null;
         $parent_nom = trim($_POST['parent_nom'] ?? '') ?: null;
         $parent_prenom = trim($_POST['parent_prenom'] ?? '') ?: null;
         $parent_telephone1 = trim($_POST['parent_telephone1'] ?? '') ?: null;
@@ -55,17 +69,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_SESSION['role'] === 'admin' || $
         if ($stmt->fetchColumn() == 0) {
             throw new Exception("ID du parent invalide.");
         }
+        // Calculer catégorie
+        $age_and_category = calculateAgeAndCategory($date_naissance);
+        $categorie = $age_and_category['category'];
 
-        // Insertion (exclude id, let AUTO_INCREMENT handle it)
+        // Insertion
         $stmt = $db->prepare("
             INSERT INTO children (
-                nom, prenom, sexe, parent_nom, parent_prenom, parent_telephone1, 
-                parent_telephone2, parent_email, parent_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                nom, prenom, sexe, date_naissance, categorie, parent_nom, parent_prenom, 
+                parent_telephone1, parent_telephone2, parent_email, parent_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
-            $nom, $prenom, $sexe, $parent_nom, $parent_prenom, $parent_telephone1,
-            $parent_telephone2, $parent_email, $parent_id
+            $nom, $prenom, $sexe, $date_naissance, $categorie, $parent_nom, $parent_prenom,
+            $parent_telephone1, $parent_telephone2, $parent_email, $parent_id
         ]);
 
         // Récupérer l'ID généré
@@ -86,6 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_SESSION['role'] === 'admin' || $
         $nom = trim($_POST['nom'] ?? '') ?: null;
         $prenom = trim($_POST['prenom'] ?? '') ?: null;
         $sexe = trim($_POST['sexe'] ?? '') ?: null;
+        $date_naissance = trim($_POST['date_naissance'] ?? '') ?: null;
         $parent_nom = trim($_POST['parent_nom'] ?? '') ?: null;
         $parent_prenom = trim($_POST['parent_prenom'] ?? '') ?: null;
         $parent_telephone1 = trim($_POST['parent_telephone1'] ?? '') ?: null;
@@ -106,17 +124,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_SESSION['role'] === 'admin' || $
         if ($stmt->fetchColumn() == 0) {
             throw new Exception("ID du parent invalide.");
         }
+        // Calculer catégorie
+        $age_and_category = calculateAgeAndCategory($date_naissance);
+        $categorie = $age_and_category['category'];
 
         // Mise à jour
         $stmt = $db->prepare("
             UPDATE children SET
-                nom = ?, prenom = ?, sexe = ?, parent_nom = ?, parent_prenom = ?, 
-                parent_telephone1 = ?, parent_telephone2 = ?, parent_email = ?, parent_id = ?
+                nom = ?, prenom = ?, sexe = ?, date_naissance = ?, categorie = ?,
+                parent_nom = ?, parent_prenom = ?, parent_telephone1 = ?,
+                parent_telephone2 = ?, parent_email = ?, parent_id = ?
             WHERE id = ?
         ");
         $stmt->execute([
-            $nom, $prenom, $sexe, $parent_nom, $parent_prenom, $parent_telephone1,
-            $parent_telephone2, $parent_email, $parent_id, $id
+            $nom, $prenom, $sexe, $date_naissance, $categorie, $parent_nom, $parent_prenom,
+            $parent_telephone1, $parent_telephone2, $parent_email, $parent_id, $id
         ]);
 
         logAction($_SESSION['user_id'], "Mise à jour enfant: $id", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
@@ -168,6 +190,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                OR c.nom LIKE :term 
                OR c.prenom LIKE :term 
                OR c.sexe LIKE :term 
+               OR c.categorie LIKE :term 
                OR c.parent_id LIKE :term
         ";
         $stmt = $db->prepare($query);
@@ -216,9 +239,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             LEFT JOIN members m ON c.parent_id = m.id
         ";
         if ($search_term) {
-            $query .= " WHERE c.id LIKE ? OR c.nom LIKE ? OR c.prenom LIKE ? OR c.sexe LIKE ? OR c.parent_id LIKE ?";
+            $query .= " WHERE c.id LIKE ? OR c.nom LIKE ? OR c.prenom LIKE ? OR c.sexe LIKE ? OR c.categorie LIKE ? OR c.parent_id LIKE ?";
             $stmt = $db->prepare($query);
-            $stmt->execute(["%$search_term%", "%$search_term%", "%$search_term%", "%$search_term%", "%$search_term%"]);
+            $stmt->execute(["%$search_term%", "%$search_term%", "%$search_term%", "%$search_term%", "%$search_term%", "%$search_term%"]);
         } else {
             $stmt = $db->prepare($query);
             $stmt->execute();
@@ -228,10 +251,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="children_list.csv"');
         $output = fopen('php://output', 'w');
-        fputcsv($output, ['ID', 'Nom', 'Prénom', 'Sexe', 'Parent Nom', 'Parent Prénom', 'Téléphone 1', 'Téléphone 2', 'Email', 'Parent ID']);
+        fputcsv($output, ['ID', 'Nom', 'Prénom', 'Sexe', 'Date de Naissance', 'Catégorie', 'Parent Nom', 'Parent Prénom', 'Téléphone 1', 'Téléphone 2', 'Email', 'Parent ID']);
         foreach ($children as $child) {
             fputcsv($output, [
                 $child['id'], $child['nom'], $child['prenom'], $child['sexe'] ?? '-',
+                $child['date_naissance'] ?? '-', $child['categorie'] ?? '-',
                 $child['parent_nom'] ?? '-', $child['parent_prenom'] ?? '-',
                 $child['parent_telephone1'] ?? '-', $child['parent_telephone2'] ?? '-',
                 $child['parent_email'] ?? '-', $child['parent_id'] ?? '-'
@@ -247,7 +271,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
 // Liste des enfants
 try {
-    $childrenthechildren = $db->query("
+    $children = $db->query("
         SELECT c.*, m.nom AS parent_nom_membre, m.prenom AS parent_prenom_membre
         FROM children c
         LEFT JOIN members m ON c.parent_id = m.id
@@ -404,6 +428,9 @@ if (isset($_GET['view'])) {
             width: 200px;
             white-space: nowrap;
         }
+        .dropdown-menu {
+            min-width: 120px;
+        }
     </style>
 </head>
 <body>
@@ -414,7 +441,6 @@ if (isset($_GET['view'])) {
             </div>
             <ul class="nav flex-column">
                 <li class="nav-item"><a href="index.php" class="nav-link">Tableau de Bord</a></li>
-уп
                 <li class="nav-item"><a href="members.php" class="nav-link">Membres</a></li>
                 <li class="nav-item"><a href="children.php" class="nav-link active">Enfants</a></li>
                 <li class="nav-item"><a href="formations.php" class="nav-link">Formations</a></li>
@@ -447,18 +473,30 @@ if (isset($_GET['view'])) {
                 </div>
             <?php endif; ?>
 
-            <div class="mb-3">
-                <?php if ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'diacre'): ?>
-                    <button class="btn btn-primary" data-toggle="modal" data-target="#addChildModal">Ajouter un Enfant</button>
-                <?php endif; ?>
-                <button class="btn btn-info" data-toggle="modal" data-target="#searchModal">Rechercher</button>
-                <?php if ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'diacre'): ?>
-                    <form action="children.php" method="POST" style="display: inline;">
-                        <input type="hidden" name="action" value="export_csv">
-                        <input type="hidden" name="search_term" id="export-csv-search-term" value="">
-                        <button type="submit" class="btn btn-success">Exporter en CSV</button>
-                    </form>
-                <?php endif; ?>
+            <div class="mb-3 d-flex justify-content-between">
+                <div>
+                    <?php if ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'diacre'): ?>
+                        <button class="btn btn-primary" data-toggle="modal" data-target="#addChildModal">Ajouter un Enfant</button>
+                    <?php endif; ?>
+                    <button class="btn btn-info" data-toggle="modal" data-target="#searchModal">Rechercher</button>
+                    <?php if ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'diacre'): ?>
+                        <form action="children.php" method="POST" style="display: inline;">
+                            <input type="hidden" name="action" value="export_csv">
+                            <input type="hidden" name="search_term" id="export-csv-search-term" value="">
+                            <button type="submit" class="btn btn-success">Exporter en CSV</button>
+                        </form>
+                    <?php endif; ?>
+                </div>
+                <div class="dropdown">
+                    <button class="btn btn-secondary dropdown-toggle" type="button" id="categoryFilter" aria-haspopup="true" aria-expanded="false">
+                        Filtrer par Catégorie
+                    </button>
+                    <div class="dropdown-menu" aria-labelledby="categoryFilter">
+                        <a class="dropdown-item category-filter" href="#" data-filter="all">Tous</a>
+                        <a class="dropdown-item category-filter" href="#" data-filter="Enfant">Enfant</a>
+                        <a class="dropdown-item category-filter" href="#" data-filter="Teenager">Teenager</a>
+                    </div>
+                </div>
             </div>
 
             <table id="children-table" class="table table-bordered table-striped">
@@ -468,18 +506,19 @@ if (isset($_GET['view'])) {
                         <th>Nom et Prénom</th>
                         <th>Sexe</th>
                         <th>Parent/Tuteur</th>
-                        <th>Téléphone 1</th>
+                        <th>Âge</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($children as $child): ?>
-                        <tr id="child-<?php echo htmlspecialchars($child['id']); ?>">
+                        <?php $age_and_category = calculateAgeAndCategory($child['date_naissance']); ?>
+                        <tr id="child-<?php echo htmlspecialchars($child['id']); ?>" data-category="<?php echo htmlspecialchars($child['categorie'] ?: ''); ?>">
                             <td><?php echo htmlspecialchars($child['id']); ?></td>
                             <td><?php echo htmlspecialchars($child['nom'] . ' ' . $child['prenom']); ?></td>
                             <td><?php echo htmlspecialchars($child['sexe'] ?: '-'); ?></td>
                             <td><?php echo htmlspecialchars($child['parent_nom'] . ' ' . $child['parent_prenom']); ?></td>
-                            <td><?php echo htmlspecialchars($child['parent_telephone1'] ?: '-'); ?></td>
+                            <td><?php echo $age_and_category['age'] !== null ? htmlspecialchars($age_and_category['age'] . ' ans') : '-'; ?></td>
                             <td>
                                 <button class="btn btn-sm btn-info view-child" data-child-id="<?php echo htmlspecialchars($child['id']); ?>">Voir</button>
                                 <?php if ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'diacre'): ?>
@@ -523,6 +562,10 @@ if (isset($_GET['view'])) {
                                                 <option value="Masculin">Masculin</option>
                                                 <option value="Féminin">Féminin</option>
                                             </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="date_naissance">Date de Naissance</label>
+                                            <input type="date" class="form-control" id="date_naissance" name="date_naissance">
                                         </div>
                                         <div class="form-group">
                                             <label for="parent_nom">Nom du Parent/Tuteur</label>
@@ -602,6 +645,10 @@ if (isset($_GET['view'])) {
                                             </select>
                                         </div>
                                         <div class="form-group">
+                                            <label for="update_date_naissance">Date de Naissance</label>
+                                            <input type="date" class="form-control" id="update_date_naissance" name="date_naissance">
+                                        </div>
+                                        <div class="form-group">
                                             <label for="update_parent_nom">Nom du Parent/Tuteur</label>
                                             <input type="text" class="form-control" id="update_parent_nom" name="parent_nom">
                                         </div>
@@ -658,11 +705,15 @@ if (isset($_GET['view'])) {
                         </div>
                         <div class="modal-body">
                             <?php if ($view_child): ?>
+                                <?php $age_and_category = calculateAgeAndCategory($view_child['date_naissance']); ?>
                                 <h6>Informations de l'Enfant</h6>
                                 <p><strong>ID:</strong> <?php echo htmlspecialchars($view_child['id']); ?></p>
                                 <p><strong>Nom:</strong> <?php echo htmlspecialchars($view_child['nom']); ?></p>
                                 <p><strong>Prénom:</strong> <?php echo htmlspecialchars($view_child['prenom']); ?></p>
                                 <p><strong>Sexe:</strong> <?php echo htmlspecialchars($view_child['sexe'] ?: '-'); ?></p>
+                                <p><strong>Date de Naissance:</strong> <?php echo htmlspecialchars($view_child['date_naissance'] ?: '-'); ?></p>
+                                <p><strong>Âge:</strong> <?php echo $age_and_category['age'] !== null ? htmlspecialchars($age_and_category['age'] . ' ans') : '-'; ?></p>
+                                <p><strong>Catégorie:</strong> <?php echo htmlspecialchars($view_child['categorie'] ?: '-'); ?></p>
                                 <h6>Informations du Parent/Tuteur</h6>
                                 <p><strong>Nom:</strong> <?php echo htmlspecialchars($view_child['parent_nom'] ?: '-'); ?></p>
                                 <p><strong>Prénom:</strong> <?php echo htmlspecialchars($view_child['parent_prenom'] ?: '-'); ?></p>
@@ -718,7 +769,7 @@ if (isset($_GET['view'])) {
                         </div>
                         <div class="modal-body">
                             <div class="search-bar mb-3">
-                                <input type="text" class="form-control" id="search-input" placeholder="Rechercher par ID, Nom, Prénom, Sexe ou ID Parent...">
+                                <input type="text" class="form-control" id="search-input" placeholder="Rechercher par ID, Nom, Prénom, Sexe, Catégorie ou ID Parent...">
                                 <span class="clear-search" id="clear-search" style="display: none;">×</span>
                             </div>
                             <div class="spinner-container" id="search-spinner" style="display: none; text-align: center;">
@@ -734,7 +785,7 @@ if (isset($_GET['view'])) {
                                             <th>Nom et Prénom</th>
                                             <th>Sexe</th>
                                             <th>Parent/Tuteur</th>
-                                            <th>Téléphone 1</th>
+                                            <th>Âge</th>
                                             <th>Actions</th>
                                         </tr>
                                     </thead>
@@ -755,6 +806,20 @@ if (isset($_GET['view'])) {
             <script src="assets/bootstrap/js/bootstrap.min.js"></script>
             <script>
                 $(document).ready(function() {
+                    // Toggle dropdown manually
+                    $('#categoryFilter').on('click', function() {
+                        $(this).parent().toggleClass('show');
+                        $(this).siblings('.dropdown-menu').toggleClass('show');
+                    });
+
+                    // Close dropdown when clicking outside
+                    $(document).on('click', function(e) {
+                        if (!$(e.target).closest('.dropdown').length) {
+                            $('.dropdown').removeClass('show');
+                            $('.dropdown-menu').removeClass('show');
+                        }
+                    });
+
                     // Bouton Voir
                     $(document).on('click', '.view-child', function(e) {
                         e.preventDefault();
@@ -778,6 +843,7 @@ if (isset($_GET['view'])) {
                                     $('#update_nom').val(child.nom);
                                     $('#update_prenom').val(child.prenom);
                                     $('#update_sexe').val(child.sexe);
+                                    $('#update_date_naissance').val(child.date_naissance);
                                     $('#update_parent_nom').val(child.parent_nom);
                                     $('#update_parent_prenom').val(child.parent_prenom);
                                     $('#update_parent_telephone1').val(child.parent_telephone1);
@@ -857,13 +923,15 @@ if (isset($_GET['view'])) {
                                             if (response.results.length > 0) {
                                                 $('#search-results-body').empty();
                                                 response.results.forEach(function(child) {
+                                                    var age = child.date_naissance ? 
+                                                        Math.floor((new Date('2025-04-25') - new Date(child.date_naissance)) / (365.25 * 24 * 60 * 60 * 1000)) : '-';
                                                     var row = `
                                                         <tr id="search-child-${child.id}">
                                                             <td>${child.id || '-'}</td>
                                                             <td>${(child.nom || '') + ' ' + (child.prenom || '')}</td>
                                                             <td>${child.sexe || '-'}</td>
-                                                            <td>${(child.parent_nom || '') + ' ' + (child.parent_prenom || '')}</td>
-                                                            <td>${child.parent_telephone1 || '-'}</td>
+                                                            <td>${(child.parent_nom || '') + ' ' + (child.prenom || '')}</td>
+                                                            <td>${age !== '-' ? age + ' ans' : '-'}</td>
                                                             <td>
                                                                 <button class="btn btn-sm btn-info view-child" data-child-id="${child.id}">Voir</button>
                                                                 <?php if ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'diacre'): ?>
@@ -907,6 +975,29 @@ if (isset($_GET['view'])) {
                         $('#search-results-body').html('<tr><td colspan="6">Entrez un terme de recherche.</td></tr>');
                         $('#export-csv-search-term').val('');
                         console.log('Recherche réinitialisée');
+                    });
+
+                    // Filtrer par catégorie
+                    $('.category-filter').on('click', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation(); // Prevent dropdown from closing
+                        var filter = $(this).data('filter');
+                        console.log('Filtre sélectionné : ', filter);
+                        $('#categoryFilter').text('Catégorie: ' + (filter === 'all' ? 'Tous' : filter));
+                        
+                        $('#children-table tbody tr').each(function() {
+                            var category = $(this).data('category') || '';
+                            console.log('Ligne catégorie : ', category);
+                            if (filter === 'all' || category === filter) {
+                                $(this).show();
+                            } else {
+                                $(this).hide();
+                            }
+                        });
+                        
+                        // Close dropdown
+                        $(this).closest('.dropdown').removeClass('show');
+                        $(this).closest('.dropdown-menu').removeClass('show');
                     });
 
                     // Afficher modal détails

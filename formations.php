@@ -24,17 +24,36 @@ try {
     $error = "Erreur de connexion à la base de données : " . $e->getMessage();
 }
 
+// Fetch Sessions for a Formation (AJAX)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_sessions') {
+    try {
+        $formation_id = $_POST['formation_id'] ?? '';
+        if (empty($formation_id)) throw new Exception("ID de formation manquant.");
+
+        $stmt = $db->prepare("SELECT id, nom, date_session FROM sessions WHERE formation_id = ? ORDER BY date_session ASC");
+        $stmt->execute([$formation_id]);
+        $sessions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode(['success' => true, 'sessions' => $sessions]);
+    } catch (Exception $e) {
+        error_log("Get sessions error: " . $e->getMessage());
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => "Erreur : " . $e->getMessage()]);
+    }
+    exit;
+}
+
 // Create Attendance
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'create' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
     try {
         $member_id = trim($_POST['member_id'] ?? '');
         $formation_id = trim($_POST['formation_id'] ?? '');
+        $session_id = trim($_POST['session_id'] ?? '');
         $date_presence = trim($_POST['date_presence'] ?? '');
         $present = isset($_POST['present']) ? 1 : 0;
-        $points = trim($_POST['points'] ?? '0');
 
-        if (empty($member_id) || empty($formation_id) || empty($date_presence)) {
-            throw new Exception("Les champs Membre, Formation et Date sont requis.");
+        if (empty($member_id) || empty($formation_id) || empty($session_id) || empty($date_presence)) {
+            throw new Exception("Les champs Membre, Formation, Session et Date sont requis.");
         }
         // Verify member_id exists
         $stmt = $db->prepare("SELECT id FROM members WHERE id = ?");
@@ -42,37 +61,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'create' && in
         if (!$stmt->fetch()) {
             throw new Exception("Membre invalide.");
         }
-        // Verify formation_id exists and get date range
-        $stmt = $db->prepare("SELECT id, date_debut, date_fin FROM formations WHERE id = ?");
-        $stmt->execute([$formation_id]);
-        $formation = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$formation) {
-            throw new Exception("Formation invalide.");
+        // Verify member is enrolled in formation
+        $stmt = $db->prepare("SELECT member_id FROM member_formations WHERE member_id = ? AND formation_id = ?");
+        $stmt->execute([$member_id, $formation_id]);
+        if (!$stmt->fetch()) {
+            throw new Exception("Ce membre n'est pas inscrit à cette formation.");
         }
-        // Validate date_presence within formation dates
-        if ($date_presence < $formation['date_debut'] || $date_presence > $formation['date_fin']) {
-            throw new Exception("La date de présence doit être entre {$formation['date_debut']} et {$formation['date_fin']}.");
+        // Verify session_id exists and belongs to formation
+        $stmt = $db->prepare("SELECT id, date_session FROM sessions WHERE id = ? AND formation_id = ?");
+        $stmt->execute([$session_id, $formation_id]);
+        $session = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$session) {
+            throw new Exception("Session invalide ou non associée à la formation.");
+        }
+        // Validate date_presence matches session date
+        if ($date_presence !== $session['date_session']) {
+            throw new Exception("La date de présence doit correspondre à la date de la session ({$session['date_session']}).");
         }
         // Check for duplicate attendance
-        $stmt = $db->prepare("SELECT id FROM formation_attendance WHERE member_id = ? AND formation_id = ? AND date_presence = ?");
-        $stmt->execute([$member_id, $formation_id, $date_presence]);
+        $stmt = $db->prepare("SELECT id FROM formation_attendance WHERE member_id = ? AND session_id = ? AND date_presence = ?");
+        $stmt->execute([$member_id, $session_id, $date_presence]);
         if ($stmt->fetch()) {
-            throw new Exception("Une présence pour ce membre, cette formation et cette date existe déjà.");
-        }
-        // Validate points
-        if (!is_numeric($points) || $points < 0) {
-            throw new Exception("Les points doivent être un nombre positif.");
+            throw new Exception("Une présence pour ce membre, cette session et cette date existe déjà.");
         }
 
         $stmt = $db->prepare("
-            INSERT INTO formation_attendance (member_id, formation_id, date_presence, present, points)
+            INSERT INTO formation_attendance (member_id, formation_id, session_id, date_presence, present)
             VALUES (?, ?, ?, ?, ?)
         ");
-        $stmt->execute([$member_id, $formation_id, $date_presence, $present, $points]);
+        $stmt->execute([$member_id, $formation_id, $session_id, $date_presence, $present]);
 
         $attendance_id = $db->lastInsertId();
 
-        logAction($_SESSION['user_id'], "Création présence: $attendance_id (Membre: $member_id, Formation: $formation_id)", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction($_SESSION['user_id'], "Création présence: $attendance_id (Membre: $member_id, Formation: $formation_id, Session: $session_id)", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Présence enregistrée avec succès (ID: $attendance_id)."]);
     } catch (Exception $e) {
         error_log("Create attendance error: " . $e->getMessage());
@@ -89,12 +110,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'update' && in
         $id = trim($_POST['id'] ?? '');
         $member_id = trim($_POST['member_id'] ?? '');
         $formation_id = trim($_POST['formation_id'] ?? '');
+        $session_id = trim($_POST['session_id'] ?? '');
         $date_presence = trim($_POST['date_presence'] ?? '');
         $present = isset($_POST['present']) ? 1 : 0;
-        $points = trim($_POST['points'] ?? '0');
 
-        if (empty($id) || empty($member_id) || empty($formation_id) || empty($date_presence)) {
-            throw new Exception("Les champs ID, Membre, Formation et Date sont requis.");
+        if (empty($id) || empty($member_id) || empty($formation_id) || empty($session_id) || empty($date_presence)) {
+            throw new Exception("Les champs ID, Membre, Formation, Session et Date sont requis.");
         }
         // Verify member_id exists
         $stmt = $db->prepare("SELECT id FROM members WHERE id = ?");
@@ -102,33 +123,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'update' && in
         if (!$stmt->fetch()) {
             throw new Exception("Membre invalide.");
         }
-        // Verify formation_id exists and get date range
-        $stmt = $db->prepare("SELECT id, date_debut, date_fin FROM formations WHERE id = ?");
-        $stmt->execute([$formation_id]);
-        $formation = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$formation) {
-            throw new Exception("Formation invalide.");
+        // Verify member is enrolled in formation
+        $stmt = $db->prepare("SELECT member_id FROM member_formations WHERE member_id = ? AND formation_id = ?");
+        $stmt->execute([$member_id, $formation_id]);
+        if (!$stmt->fetch()) {
+            throw new Exception("Ce membre n'est pas inscrit à cette formation.");
         }
-        // Validate date_presence within formation dates
-        if ($date_presence < $formation['date_debut'] || $date_presence > $formation['date_fin']) {
-            throw new Exception("La date de présence doit être entre {$formation['date_debut']} et {$formation['date_fin']}.");
+        // Verify session_id exists and belongs to formation
+        $stmt = $db->prepare("SELECT id, date_session FROM sessions WHERE id = ? AND formation_id = ?");
+        $stmt->execute([$session_id, $formation_id]);
+        $session = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$session) {
+            throw new Exception("Session invalide ou non associée à la formation.");
+        }
+        // Validate date_presence matches session date
+        if ($date_presence !== $session['date_session']) {
+            throw new Exception("La date de présence doit correspondre à la date de la session ({$session['date_session']}).");
         }
         // Check for duplicate attendance (excluding current record)
-        $stmt = $db->prepare("SELECT id FROM formation_attendance WHERE member_id = ? AND formation_id = ? AND date_presence = ? AND id != ?");
-        $stmt->execute([$member_id, $formation_id, $date_presence, $id]);
+        $stmt = $db->prepare("SELECT id FROM formation_attendance WHERE member_id = ? AND session_id = ? AND date_presence = ? AND id != ?");
+        $stmt->execute([$member_id, $session_id, $date_presence, $id]);
         if ($stmt->fetch()) {
-            throw new Exception("Une présence pour ce membre, cette formation et cette date existe déjà.");
-        }
-        // Validate points
-        if (!is_numeric($points) || $points < 0) {
-            throw new Exception("Les points doivent être un nombre positif.");
+            throw new Exception("Une présence pour ce membre, cette session et cette date existe déjà.");
         }
 
         $stmt = $db->prepare("
-            UPDATE formation_attendance SET member_id = ?, formation_id = ?, date_presence = ?, present = ?, points = ?
+            UPDATE formation_attendance SET member_id = ?, formation_id = ?, session_id = ?, date_presence = ?, present = ?
             WHERE id = ?
         ");
-        $stmt->execute([$member_id, $formation_id, $date_presence, $present, $points, $id]);
+        $stmt->execute([$member_id, $formation_id, $session_id, $date_presence, $present, $id]);
 
         logAction($_SESSION['user_id'], "Mise à jour présence: $id", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Présence mise à jour avec succès (ID: $id)."]);
@@ -168,10 +191,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_attendanc
         if (empty($attendance_id)) throw new Exception("ID manquant.");
 
         $stmt = $db->prepare("
-            SELECT a.*, m.nom AS member_nom, f.nom AS formation_nom, f.promotion
+            SELECT a.*, m.nom AS member_nom, m.prenom AS member_prenom, f.nom AS formation_nom, f.promotion, s.nom AS session_nom, s.date_session
             FROM formation_attendance a
             JOIN members m ON a.member_id = m.id
             JOIN formations f ON a.formation_id = f.id
+            JOIN sessions s ON a.session_id = s.id
             WHERE a.id = ?
         ");
         $stmt->execute([$attendance_id]);
@@ -213,10 +237,11 @@ if (!empty($filter_date_end)) {
 }
 
 $sql = "
-    SELECT a.*, m.nom AS member_nom, m.prenom AS member_prenom, f.nom AS formation_nom, f.promotion
+    SELECT a.*, m.nom AS member_nom, m.prenom AS member_prenom, f.nom AS formation_nom, f.promotion, s.nom AS session_nom, s.date_session
     FROM formation_attendance a
     JOIN members m ON a.member_id = m.id
     JOIN formations f ON a.formation_id = f.id
+    JOIN sessions s ON a.session_id = s.id
 ";
 if ($where) {
     $sql .= " WHERE " . implode(" AND ", $where);
@@ -484,6 +509,7 @@ try {
                         <th>Membre</th>
                         <th>Formation</th>
                         <th>Promotion</th>
+                        <th>Session</th>
                         <th>Date</th>
                         <th>Présent</th>
                         <th>Points</th>
@@ -497,6 +523,7 @@ try {
                             <td><?php echo htmlspecialchars($attendance['member_nom'] . ' ' . $attendance['member_prenom']); ?></td>
                             <td><?php echo htmlspecialchars($attendance['formation_nom']); ?></td>
                             <td><?php echo htmlspecialchars($attendance['promotion']); ?></td>
+                            <td><?php echo htmlspecialchars($attendance['session_nom']); ?></td>
                             <td><?php echo htmlspecialchars($attendance['date_presence']); ?></td>
                             <td><?php echo $attendance['present'] ? 'Oui' : 'Non'; ?></td>
                             <td><?php echo htmlspecialchars($attendance['points']); ?></td>
@@ -584,20 +611,22 @@ try {
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
+                                            <label for="create_session_id">Session *</label>
+                                            <select class="form-control" id="create_session_id" name="session_id" required>
+                                                <option value="">Sélectionner une formation d'abord...</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
                                             <label for="create_date_presence">Date *</label>
-                                            <input type="date" class="form-control" id="create_date_presence" name="date_presence" required>
+                                            <input type="date" class="form-control" id="create_date_presence" name="date_presence" required readonly>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
                                             <label for="create_present">Présent</label>
                                             <input type="checkbox" id="create_present" name="present" checked>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="create_points">Points</label>
-                                            <input type="number" class="form-control" id="create_points" name="points" value="0" min="0">
                                         </div>
                                     </div>
                                 </div>
@@ -654,20 +683,22 @@ try {
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
+                                            <label for="edit_session_id">Session *</label>
+                                            <select class="form-control" id="edit_session_id" name="session_id" required>
+                                                <option value="">Sélectionner une formation d'abord...</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
                                             <label for="edit_date_presence">Date *</label>
-                                            <input type="date" class="form-control" id="edit_date_presence" name="date_presence" required>
+                                            <input type="date" class="form-control" id="edit_date_presence" name="date_presence" required readonly>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
                                             <label for="edit_present">Présent</label>
                                             <input type="checkbox" id="edit_present" name="present">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="edit_points">Points</label>
-                                            <input type="number" class="form-control" id="edit_points" name="points" min="0">
                                         </div>
                                     </div>
                                 </div>
@@ -696,6 +727,7 @@ try {
                             <p><strong>Membre:</strong> <span id="view_member_nom"></span></p>
                             <p><strong>Formation:</strong> <span id="view_formation_nom"></span></p>
                             <p><strong>Promotion:</strong> <span id="view_promotion"></span></p>
+                            <p><strong>Session:</strong> <span id="view_session_nom"></span></p>
                             <p><strong>Date:</strong> <span id="view_date_presence"></span></p>
                             <p><strong>Présent:</strong> <span id="view_present"></span></p>
                             <p><strong>Points:</strong> <span id="view_points"></span></p>
@@ -718,7 +750,59 @@ try {
                         language: {
                             url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/fr-FR.json'
                         },
-                        order: [[4, 'desc']] // Sort by Date (column 4) descending
+                        order: [[5, 'desc']] // Sort by Date (column 5) descending
+                    });
+
+                    // Function to load sessions for a formation
+                    function loadSessions(formationId, sessionSelectId, selectedSessionId = null, dateInputId = null) {
+                        if (!formationId) {
+                            $(sessionSelectId).html('<option value="">Sélectionner une formation d\'abord...</option>');
+                            if (dateInputId) $(dateInputId).val('');
+                            return;
+                        }
+                        $.ajax({
+                            url: 'formations.php',
+                            type: 'POST',
+                            data: { action: 'get_sessions', formation_id: formationId },
+                            dataType: 'json',
+                            success: function(response) {
+                                if (response.success) {
+                                    let options = '<option value="">Sélectionner...</option>';
+                                    response.sessions.forEach(function(session) {
+                                        options += `<option value="${session.id}" data-date="${session.date_session}">${session.nom} (${session.date_session})</option>`;
+                                    });
+                                    $(sessionSelectId).html(options);
+                                    if (selectedSessionId) {
+                                        $(sessionSelectId).val(selectedSessionId);
+                                        if (dateInputId) {
+                                            const selectedOption = $(sessionSelectId).find(`option[value="${selectedSessionId}"]`);
+                                            $(dateInputId).val(selectedOption.data('date') || '');
+                                        }
+                                    }
+                                } else {
+                                    alert('Erreur : ' + response.message);
+                                    $(sessionSelectId).html('<option value="">Erreur de chargement...</option>');
+                                    if (dateInputId) $(dateInputId).val('');
+                                }
+                            },
+                            error: function(xhr, status, error) {
+                                alert('Erreur serveur lors du chargement des sessions : ' + (xhr.responseJSON?.message || error));
+                                $(sessionSelectId).html('<option value="">Erreur de chargement...</option>');
+                                if (dateInputId) $(dateInputId).val('');
+                            }
+                        });
+                    }
+
+                    // Create modal: Load sessions when formation changes
+                    $('#create_formation_id').on('change', function() {
+                        const formationId = $(this).val();
+                        loadSessions(formationId, '#create_session_id', null, '#create_date_presence');
+                    });
+
+                    // Create modal: Update date when session changes
+                    $('#create_session_id').on('change', function() {
+                        const selectedOption = $(this).find('option:selected');
+                        $('#create_date_presence').val(selectedOption.data('date') || '');
                     });
 
                     // Create attendance
@@ -734,6 +818,8 @@ try {
                                     alert(response.message || 'Présence enregistrée avec succès.');
                                     $('#createAttendanceModal').modal('hide');
                                     $('#create-attendance-form')[0].reset();
+                                    $('#create_session_id').html('<option value="">Sélectionner une formation d\'abord...</option>');
+                                    $('#create_date_presence').val('');
                                     location.reload();
                                 } else {
                                     alert('Erreur : ' + response.message);
@@ -760,6 +846,7 @@ try {
                                     $('#view_member_nom').text(attendance.member_nom + ' ' + attendance.member_prenom);
                                     $('#view_formation_nom').text(attendance.formation_nom);
                                     $('#view_promotion').text(attendance.promotion);
+                                    $('#view_session_nom').text(attendance.session_nom);
                                     $('#view_date_presence').text(attendance.date_presence);
                                     $('#view_present').text(attendance.present ? 'Oui' : 'Non');
                                     $('#view_points').text(attendance.points);
@@ -788,9 +875,8 @@ try {
                                     $('#edit_id').val(attendance.id);
                                     $('#edit_member_id').val(attendance.member_id);
                                     $('#edit_formation_id').val(attendance.formation_id);
-                                    $('#edit_date_presence').val(attendance.date_presence);
                                     $('#edit_present').prop('checked', attendance.present == 1);
-                                    $('#edit_points').val(attendance.points);
+                                    loadSessions(attendance.formation_id, '#edit_session_id', attendance.session_id, '#edit_date_presence');
                                     $('#editAttendanceModal').modal('show');
                                 } else {
                                     alert('Erreur : ' + response.message);
@@ -800,6 +886,18 @@ try {
                                 alert('Erreur serveur lors de la récupération : ' + (xhr.responseJSON?.message || error));
                             }
                         });
+                    });
+
+                    // Edit modal: Load sessions when formation changes
+                    $('#edit_formation_id').on('change', function() {
+                        const formationId = $(this).val();
+                        loadSessions(formationId, '#edit_session_id', null, '#edit_date_presence');
+                    });
+
+                    // Edit modal: Update date when session changes
+                    $('#edit_session_id').on('change', function() {
+                        const selectedOption = $(this).find('option:selected');
+                        $('#edit_date_presence').val(selectedOption.data('date') || '');
                     });
 
                     // Update attendance

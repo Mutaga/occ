@@ -4,54 +4,46 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-session_start();
+define('APP_START', true); // Define constant to allow session_manager access
+require_once 'session_manager.php';
 require_once 'config.php';
 
 // Verify user is logged in
-if (!isset($_SESSION['user_id'])) {
-    header('Location: auth.php');
-    exit;
-}
+requireLogin();
 
-// Log access to confirm file usage
-logAction($_SESSION['user_id'], "Accès à sessions.php", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+// Log access
+logAction(getCurrentUserId(), "Accès à sessions.php", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+
+// ... rest of the file remains unchanged, but update CSRF validation to use validateCsrfToken() ...
 
 // Initialize messages and filter
 $error = null;
 $success = null;
-$filter_status = $_GET['filter_status'] ?? '';
+$filter_status = filter_input(INPUT_GET, 'filter_status', FILTER_SANITIZE_STRING) ?? '';
 
 // Database connection
 try {
     $db = getDBConnection();
 } catch (Exception $e) {
-    $error = "Erreur de connexion à la base de données : " . $e->getMessage();
+    $error = "Erreur de connexion à la base de données : " . htmlspecialchars($e->getMessage());
 }
 
 // Fetch formations for dropdown
 try {
-    $stmt = $db->prepare("
-        SELECT id, nom, promotion
-        FROM formations
-        ORDER BY promotion DESC, nom
-    ");
+    $stmt = $db->prepare("SELECT id, nom, promotion FROM formations ORDER BY promotion DESC, nom");
     $stmt->execute();
     $formations = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Exception $e) {
-    $error = "Erreur récupération formations : " . $e->getMessage();
+    $error = "Erreur récupération formations : " . htmlspecialchars($e->getMessage());
 }
 
 // Fetch teachers for dropdown
 try {
-    $stmt = $db->prepare("
-        SELECT id, first_name, last_name
-        FROM teachers
-        ORDER BY last_name, first_name
-    ");
+    $stmt = $db->prepare("SELECT id, first_name, last_name FROM teachers ORDER BY last_name, first_name");
     $stmt->execute();
     $teachers = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Exception $e) {
-    $error = "Erreur récupération enseignants : " . $e->getMessage();
+    $error = "Erreur récupération enseignants : " . htmlspecialchars($e->getMessage());
 }
 
 // Status translations
@@ -61,14 +53,22 @@ $status_labels = [
     'cancelled' => 'Annulé'
 ];
 
+// Validate CSRF for POST requests
+function validateCsrfToken() {
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        throw new Exception("Jeton CSRF invalide.");
+    }
+}
+
 // Create Session
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'create' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'create' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
     try {
-        $formation_id = trim($_POST['formation_id'] ?? '');
-        $teacher_id = trim($_POST['teacher_id'] ?? '') ?: null;
-        $nom = trim($_POST['nom'] ?? '');
-        $date_session = trim($_POST['date_session'] ?? '') ?: null;
-        $status = trim($_POST['status'] ?? 'planned');
+        validateCsrfToken();
+        $formation_id = filter_input(INPUT_POST, 'formation_id', FILTER_SANITIZE_STRING) ?? '';
+        $teacher_id = filter_input(INPUT_POST, 'teacher_id', FILTER_SANITIZE_STRING) ?: null;
+        $nom = filter_input(INPUT_POST, 'nom', FILTER_SANITIZE_STRING) ?? '';
+        $date_session = filter_input(INPUT_POST, 'date_session', FILTER_SANITIZE_STRING) ?: null;
+        $status = filter_input(INPUT_POST, 'status', FILTER_SANITIZE_STRING) ?? 'planned';
 
         if (empty($formation_id) || empty($nom)) {
             throw new Exception("Les champs Formation et Nom de la session sont requis.");
@@ -97,36 +97,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'create' && in
             INSERT INTO sessions (formation_id, teacher_id, nom, date_session, status)
             VALUES (?, ?, ?, ?, ?)
         ");
-        $stmt->execute([
-            $formation_id,
-            $teacher_id,
-            $nom,
-            $date_session,
-            $status
-        ]);
+        $stmt->execute([$formation_id, $teacher_id, $nom, $date_session, $status]);
 
         $session_id = $db->lastInsertId();
-
         logAction($_SESSION['user_id'], "Création session: $session_id (Formation: $formation_id, Nom: $nom, Statut: $status, Enseignant: " . ($teacher_id ?: 'Aucun') . ")", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Session créée avec succès (ID: $session_id)."]);
     } catch (Exception $e) {
         error_log("Create session error: " . $e->getMessage());
         logAction($_SESSION['user_id'], "Erreur création session: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         http_response_code(500);
-        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        echo json_encode(['success' => false, 'message' => htmlspecialchars($e->getMessage())]);
     }
     exit;
 }
 
 // Update Session
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'update' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
     try {
-        $id = trim($_POST['id'] ?? '');
-        $formation_id = trim($_POST['formation_id'] ?? '');
-        $teacher_id = trim($_POST['teacher_id'] ?? '') ?: null;
-        $nom = trim($_POST['nom'] ?? '');
-        $date_session = trim($_POST['date_session'] ?? '') ?: null;
-        $status = trim($_POST['status'] ?? 'planned');
+        validateCsrfToken();
+        $id = filter_input(INPUT_POST, 'id', FILTER_SANITIZE_STRING) ?? '';
+        $formation_id = filter_input(INPUT_POST, 'formation_id', FILTER_SANITIZE_STRING) ?? '';
+        $teacher_id = filter_input(INPUT_POST, 'teacher_id', FILTER_SANITIZE_STRING) ?: null;
+        $nom = filter_input(INPUT_POST, 'nom', FILTER_SANITIZE_STRING) ?? '';
+        $date_session = filter_input(INPUT_POST, 'date_session', FILTER_SANITIZE_STRING) ?: null;
+        $status = filter_input(INPUT_POST, 'status', FILTER_SANITIZE_STRING) ?? 'planned';
 
         if (empty($id) || empty($formation_id) || empty($nom)) {
             throw new Exception("Les champs ID, Formation et Nom de la session sont requis.");
@@ -163,14 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'update' && in
             SET formation_id = ?, teacher_id = ?, nom = ?, date_session = ?, status = ?
             WHERE id = ?
         ");
-        $stmt->execute([
-            $formation_id,
-            $teacher_id,
-            $nom,
-            $date_session,
-            $status,
-            $id
-        ]);
+        $stmt->execute([$formation_id, $teacher_id, $nom, $date_session, $status, $id]);
 
         logAction($_SESSION['user_id'], "Mise à jour session: $id (Formation: $formation_id, Statut: $status, Enseignant: " . ($teacher_id ?: 'Aucun') . ")", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Session mise à jour avec succès (ID: $id)."]);
@@ -178,18 +165,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'update' && in
         error_log("Update session error: " . $e->getMessage());
         logAction($_SESSION['user_id'], "Erreur mise à jour session: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         http_response_code(500);
-        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        echo json_encode(['success' => false, 'message' => htmlspecialchars($e->getMessage())]);
     }
     exit;
 }
 
 // Delete Session
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'delete' && $_SESSION['role'] === 'admin') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete' && $_SESSION['role'] === 'admin') {
     try {
-        $id = $_POST['session_id'] ?? '';
+        validateCsrfToken();
+        $id = filter_input(INPUT_POST, 'session_id', FILTER_SANITIZE_STRING) ?? '';
         if (empty($id)) throw new Exception("ID manquant.");
 
-        // Check if session is used in formation_attendance
         $stmt = $db->prepare("SELECT COUNT(*) AS count FROM formation_attendance WHERE formation_id = (SELECT formation_id FROM sessions WHERE id = ?)");
         $stmt->execute([$id]);
         if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
@@ -205,15 +192,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'delete' && $_
         error_log("Delete session error: " . $e->getMessage());
         logAction($_SESSION['user_id'], "Erreur suppression session: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         http_response_code(500);
-        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        echo json_encode(['success' => false, 'message' => htmlspecialchars($e->getMessage())]);
     }
     exit;
 }
 
 // Get Session Details
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_session') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'get_session') {
     try {
-        $session_id = $_POST['session_id'] ?? '';
+        validateCsrfToken();
+        $session_id = filter_input(INPUT_POST, 'session_id', FILTER_SANITIZE_STRING) ?? '';
         if (empty($session_id)) throw new Exception("ID manquant.");
 
         $stmt = $db->prepare("
@@ -229,7 +217,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_session')
         $session = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$session) throw new Exception("Session introuvable.");
 
-        // Ensure valid status
         if (!isset($status_labels[$session['status']])) {
             $session['status'] = 'planned';
         }
@@ -238,7 +225,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_session')
     } catch (Exception $e) {
         error_log("Get session error: " . $e->getMessage());
         http_response_code(500);
-        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        echo json_encode(['success' => false, 'message' => htmlspecialchars($e->getMessage())]);
     }
     exit;
 }
@@ -247,7 +234,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_session')
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
     $where = [];
     $params = [];
-    $filter_status = $_GET['filter_status'] ?? '';
+    $filter_status = filter_input(INPUT_GET, 'filter_status', FILTER_SANITIZE_STRING) ?? '';
 
     if (!empty($filter_status)) {
         $where[] = "s.status = ?";
@@ -275,7 +262,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
     } catch (Exception $e) {
         error_log("AJAX fetch error: " . $e->getMessage());
         http_response_code(500);
-        echo json_encode(['error' => "Erreur récupération sessions : " . $e->getMessage()]);
+        echo json_encode(['error' => "Erreur récupération sessions : " . htmlspecialchars($e->getMessage())]);
     }
     exit;
 }
@@ -287,9 +274,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Oasis Christian Center - Gestion des Sessions</title>
-    <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap4.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <link href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <style>
         body {
             background-color: #f4f6f9;
@@ -329,33 +316,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
-        .table th, .table td {
-            vertical-align: middle;
-        }
-        .btn-primary {
-            background-color: #007bff;
-            border-color: #007bff;
-        }
-        .btn-primary:hover {
-            background-color: #0056b3;
-            border-color: #0056b3;
-        }
-        .btn-danger {
-            background-color: #dc3545;
-            border-color: #dc3545;
-        }
-        .btn-danger:hover {
-            background-color: #c82333;
-            border-color: #c82333;
-        }
-        .btn-warning {
-            background-color: #ffc107;
-            border-color: #ffc107;
-        }
-        .btn-warning:hover {
-            background-color: #e0a800;
-            border-color: #d39e00;
-        }
         .modal-content {
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -368,7 +328,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
         .btn-sm {
             font-size: 11px;
             padding: 3px 6px;
-            line-height: 1.4;
         }
         .action-buttons {
             display: flex;
@@ -389,10 +348,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
         .toast {
             border-radius: 8px;
             min-width: 300px;
-        }
-        .toast-header {
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
         }
     </style>
 </head>
@@ -428,13 +383,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
             <?php if ($error): ?>
                 <div class="alert alert-danger alert-dismissible fade show" role="alert">
                     <?php echo htmlspecialchars($error); ?>
-                    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                        <span aria-hidden="true">×</span>
-                    </button>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
             <?php endif; ?>
 
-            <!-- Toast Notification Container -->
             <div class="toast-container position-fixed top-0 end-0 p-3">
                 <div id="notification-toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="true" data-bs-delay="5000">
                     <div class="toast-header">
@@ -446,14 +398,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                 </div>
             </div>
 
-            <!-- Filter Section -->
             <div class="filter-section">
                 <form method="GET" id="filter-form">
                     <div class="row">
                         <div class="col-md-3">
                             <div class="form-group">
                                 <label for="filter_status">Statut</label>
-                                <select class="form-control" id="filter_status" name="filter_status">
+                                <select class="form-select" id="filter_status" name="filter_status">
                                     <option value="">Tous</option>
                                     <?php foreach ($status_labels as $value => $label): ?>
                                         <option value="<?php echo htmlspecialchars($value); ?>" <?php echo $filter_status === $value ? 'selected' : ''; ?>>
@@ -464,8 +415,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                             </div>
                         </div>
                         <div class="col-md-3 d-flex align-items-end">
-                            <button type="submit" class="btn btn-primary">Filtrer</button>
-                            <a href="sessions.php" class="btn btn-secondary ml-2">Réinitialiser</a>
+                            <button type="submit" class="btn btn-primary me-2">Filtrer</button>
+                            <a href="sessions.php" class="btn btn-secondary">Réinitialiser</a>
                         </div>
                     </div>
                 </form>
@@ -473,12 +424,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
 
             <div class="mb-3">
                 <?php if (in_array($_SESSION['role'], ['admin', 'diacre'])): ?>
-                    <button class="btn btn-primary" data-toggle="modal" data-target="#createSessionModal">Créer une Session</button>
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createSessionModal">Créer une Session</button>
                 <?php endif; ?>
             </div>
 
             <table id="session-table" class="table table-bordered table-striped">
-                <thead class="thead-dark">
+                <thead class="table-dark">
                     <tr>
                         <th>ID</th>
                         <th>Formation</th>
@@ -492,24 +443,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                 <tbody></tbody>
             </table>
 
-            <!-- Create Session Modal -->
-            <div class="modal fade" id="createSessionModal" tabindex="-1" role="dialog" aria-labelledby="createSessionModalLabel" aria-hidden="true">
-                <div class="modal-dialog modal-lg" role="document">
+            <div class="modal fade" id="createSessionModal" tabindex="-1" aria-labelledby="createSessionModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-lg">
                     <div class="modal-content">
                         <div class="modal-header bg-primary text-white">
                             <h5 class="modal-title" id="createSessionModalLabel">Créer une Session</h5>
-                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                                <span aria-hidden="true">×</span>
-                            </button>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
                         <form id="create-session-form">
                             <input type="hidden" name="action" value="create">
+                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                             <div class="modal-body">
                                 <div class="row">
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="create_formation_id">Formation *</label>
-                                            <select class="form-control" id="create_formation_id" name="formation_id" required>
+                                        <div class="mb-3">
+                                            <label for="create_formation_id" class="form-label">Formation *</label>
+                                            <select class="form-select" id="create_formation_id" name="formation_id" required>
                                                 <option value="">Sélectionnez une formation</option>
                                                 <?php foreach ($formations as $formation): ?>
                                                     <option value="<?php echo htmlspecialchars($formation['id']); ?>">
@@ -520,15 +469,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                         </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="create_nom">Nom *</label>
+                                        <div class="mb-3">
+                                            <label for="create_nom" class="form-label">Nom *</label>
                                             <input type="text" class="form-control" id="create_nom" name="nom" required placeholder="ex: Chapitre 1">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="create_teacher_id">Enseignant</label>
-                                            <select class="form-control" id="create_teacher_id" name="teacher_id">
+                                        <div class="mb-3">
+                                            <label for="create_teacher_id" class="form-label">Enseignant</label>
+                                            <select class="form-select" id="create_teacher_id" name="teacher_id">
                                                 <option value="">Aucun</option>
                                                 <?php foreach ($teachers as $teacher): ?>
                                                     <option value="<?php echo htmlspecialchars($teacher['id']); ?>">
@@ -539,15 +488,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                         </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="create_date_session">Date</label>
+                                        <div class="mb-3">
+                                            <label for="create_date_session" class="form-label">Date</label>
                                             <input type="date" class="form-control" id="create_date_session" name="date_session">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="create_status">Statut *</label>
-                                            <select class="form-control" id="create_status" name="status" required>
+                                        <div class="mb-3">
+                                            <label for="create_status" class="form-label">Statut *</label>
+                                            <select class="form-select" id="create_status" name="status" required>
                                                 <?php foreach ($status_labels as $value => $label): ?>
                                                     <option value="<?php echo htmlspecialchars($value); ?>" <?php echo $value === 'planned' ? 'selected' : ''; ?>>
                                                         <?php echo htmlspecialchars($label); ?>
@@ -559,7 +508,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                 </div>
                             </div>
                             <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-dismiss="modal">Fermer</button>
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
                                 <button type="submit" class="btn btn-primary">Créer</button>
                             </div>
                         </form>
@@ -567,25 +516,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                 </div>
             </div>
 
-            <!-- Edit Session Modal -->
-            <div class="modal fade" id="editSessionModal" tabindex="-1" role="dialog" aria-labelledby="editSessionModalLabel" aria-hidden="true">
-                <div class="modal-dialog modal-lg" role="document">
+            <div class="modal fade" id="editSessionModal" tabindex="-1" aria-labelledby="editSessionModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-lg">
                     <div class="modal-content">
                         <div class="modal-header bg-warning text-dark">
                             <h5 class="modal-title" id="editSessionModalLabel">Modifier la Session</h5>
-                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                                <span aria-hidden="true">×</span>
-                            </button>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
                         <form id="edit-session-form">
                             <input type="hidden" name="action" value="update">
+                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                             <input type="hidden" name="id" id="edit_id">
                             <div class="modal-body">
                                 <div class="row">
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="edit_formation_id">Formation *</label>
-                                            <select class="form-control" id="edit_formation_id" name="formation_id" required>
+                                        <div class="mb-3">
+                                            <label for="edit_formation_id" class="form-label">Formation *</label>
+                                            <select class="form-select" id="edit_formation_id" name="formation_id" required>
                                                 <option value="">Sélectionnez une formation</option>
                                                 <?php foreach ($formations as $formation): ?>
                                                     <option value="<?php echo htmlspecialchars($formation['id']); ?>">
@@ -596,15 +543,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                         </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="edit_nom">Nom *</label>
+                                        <div class="mb-3">
+                                            <label for="edit_nom" class="form-label">Nom *</label>
                                             <input type="text" class="form-control" id="edit_nom" name="nom" required>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="edit_teacher_id">Enseignant</label>
-                                            <select class="form-control" id="edit_teacher_id" name="teacher_id">
+                                        <div class="mb-3">
+                                            <label for="edit_teacher_id" class="form-label">Enseignant</label>
+                                            <select class="form-select" id="edit_teacher_id" name="teacher_id">
                                                 <option value="">Aucun</option>
                                                 <?php foreach ($teachers as $teacher): ?>
                                                     <option value="<?php echo htmlspecialchars($teacher['id']); ?>">
@@ -615,15 +562,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                         </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="edit_date_session">Date</label>
+                                        <div class="mb-3">
+                                            <label for="edit_date_session" class="form-label">Date</label>
                                             <input type="date" class="form-control" id="edit_date_session" name="date_session">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="edit_status">Statut *</label>
-                                            <select class="form-control" id="edit_status" name="status" required>
+                                        <div class="mb-3">
+                                            <label for="edit_status" class="form-label">Statut *</label>
+                                            <select class="form-select" id="edit_status" name="status" required>
                                                 <?php foreach ($status_labels as $value => $label): ?>
                                                     <option value="<?php echo htmlspecialchars($value); ?>">
                                                         <?php echo htmlspecialchars($label); ?>
@@ -635,7 +582,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                 </div>
                             </div>
                             <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-dismiss="modal">Fermer</button>
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
                                 <button type="submit" class="btn btn-warning">Mettre à jour</button>
                             </div>
                         </form>
@@ -643,15 +590,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                 </div>
             </div>
 
-            <!-- View Session Modal -->
-            <div class="modal fade" id="viewSessionModal" tabindex="-1" role="dialog" aria-labelledby="viewSessionModalLabel" aria-hidden="true">
-                <div class="modal-dialog modal-lg" role="document">
+            <div class="modal fade" id="viewSessionModal" tabindex="-1" aria-labelledby="viewSessionModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-lg">
                     <div class="modal-content">
                         <div class="modal-header bg-info text-white">
                             <h5 class="modal-title" id="viewSessionModalLabel">Détails de la Session</h5>
-                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                                <span aria-hidden="true">×</span>
-                            </button>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
                         <div class="modal-body">
                             <p><strong>ID:</strong> <span id="view_id"></span></p>
@@ -662,25 +606,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                             <p><strong>Statut:</strong> <span id="view_status"></span></p>
                         </div>
                         <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-dismiss="modal">Fermer</button>
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
                         </div>
                     </div>
-                </div>
+               > </div>
             </div>
 
-            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-            <script src="assets/bootstrap/js/bootstrap.min.js"></script>
+            <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+            <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
             <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
-            <script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap4.min.js"></script>
+            <script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script>
             <script>
                 $(document).ready(function() {
-                    // Initialize DataTable with AJAX
+                    // Notification function
+                    function showNotification(message, type = 'success') {
+                        const toast = $('#notification-toast');
+                        const icon = $('#toast-icon');
+                        const title = $('#toast-title');
+                        const body = $('#toast-body');
+
+                        toast.removeClass('bg-success bg-danger bg-warning text-white');
+                        icon.removeClass('bi-check-circle-fill bi-exclamation-triangle-fill bi-info-circle-fill');
+
+                        if (type === 'success') {
+                            toast.addClass('bg-success text-white');
+                            icon.addClass('bi-check-circle-fill');
+                            title.text('Succès');
+                        } else if (type === 'error') {
+                            toast.addClass('bg-danger text-white');
+                            icon.addClass('bi-exclamation-triangle-fill');
+                            title.text('Erreur');
+                        } else if (type === 'warning') {
+                            toast.addClass('bg-warning');
+                            icon.addClass('bi-info-circle-fill');
+                            title.text('Avertissement');
+                        }
+
+                        body.text(message);
+                        toast.toast('show');
+                    }
+
+                    // Initialize DataTable
                     const table = $('#session-table').DataTable({
-                        language: {
-                            url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/fr-FR.json'
-                        },
+                        language: { url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/fr-FR.json' },
                         order: [[4, 'desc']],
-                        autoWidth: false,
+                        pageLength: 10,
+                        responsive: true,
                         columnDefs: [
                             { width: '150px', targets: 6, className: 'text-center' },
                             { width: '10%', targets: 0 },
@@ -745,62 +716,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         ]
                     });
 
-                    // Show notification
-                    function showNotification(message, type = 'success') {
-                        const toast = $('#notification-toast');
-                        const icon = $('#toast-icon');
-                        const title = $('#toast-title');
-                        const body = $('#toast-body');
-
-                        toast.removeClass('bg-success bg-danger bg-warning text-white');
-                        icon.removeClass('bi-check-circle-fill bi-exclamation-triangle-fill bi-info-circle-fill');
-
-                        if (type === 'success') {
-                            toast.addClass('bg-success text-white');
-                            icon.addClass('bi-check-circle-fill');
-                            title.text('Succès');
-                        } else if (type === 'error') {
-                            toast.addClass('bg-danger text-white');
-                            icon.addClass('bi-exclamation-triangle-fill');
-                            title.text('Erreur');
-                        } else if (type === 'warning') {
-                            toast.addClass('bg-warning');
-                            icon.addClass('bi-info-circle-fill');
-                            title.text('Avertissement');
-                        }
-
-                        body.text(message);
-                        toast.toast('show');
+                    // Form validation and submission
+                    function handleFormSubmission(formId, url, successMessage, modalId) {
+                        $(formId).on('submit', function(e) {
+                            e.preventDefault();
+                            const formData = $(this).serialize();
+                            if (!$(`${formId} [name="formation_id"]`).val().trim() || !$(`${formId} [name="nom"]`).val().trim()) {
+                                showNotification('Les champs Formation et Nom sont requis.', 'warning');
+                                return;
+                            }
+                            $.ajax({
+                                url: url,
+                                type: 'POST',
+                                data: formData,
+                                dataType: 'json',
+                                success: function(response) {
+                                    if (response.success) {
+                                        showNotification(response.message || successMessage, 'success');
+                                        $(modalId).modal('hide');
+                                        $(formId)[0].reset();
+                                        table.ajax.reload();
+                                    } else {
+                                        showNotification(response.message, 'error');
+                                    }
+                                },
+                                error: function(xhr) {
+                                    showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
+                                }
+                            });
+                        });
                     }
 
-                    // Create session form submission
-                    $('#create-session-form').on('submit', function(e) {
-                        e.preventDefault();
-                        const formData = $(this).serialize();
-                        if (!$('#create_formation_id').val().trim() || !$('#create_nom').val().trim()) {
-                            showNotification('Les champs Formation et Nom sont requis.', 'warning');
-                            return;
-                        }
-                        $.ajax({
-                            url: 'sessions.php',
-                            type: 'POST',
-                            data: formData,
-                            dataType: 'json',
-                            success: function(response) {
-                                if (response.success) {
-                                    showNotification(response.message || 'Session créée avec succès.', 'success');
-                                    $('#createSessionModal').modal('hide');
-                                    $('#create-session-form')[0].reset();
-                                    table.ajax.reload();
-                                } else {
-                                    showNotification(response.message, 'error');
-                                }
-                            },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors de la création : ' + (xhr.responseJSON?.message || error), 'error');
-                            }
-                        });
-                    });
+                    handleFormSubmission('#create-session-form', 'sessions.php', 'Session créée avec succès.', '#createSessionModal');
+                    handleFormSubmission('#edit-session-form', 'sessions.php', 'Session mise à jour avec succès.', '#editSessionModal');
 
                     // View session
                     $(document).on('click', '.view-session', function() {
@@ -808,7 +756,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         $.ajax({
                             url: 'sessions.php',
                             type: 'POST',
-                            data: { action: 'get_session', session_id: sessionId },
+                            data: { action: 'get_session', session_id: sessionId, csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>' },
                             dataType: 'json',
                             success: function(response) {
                                 if (response.success) {
@@ -824,8 +772,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     showNotification(response.message, 'error');
                                 }
                             },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors de la récupération : ' + (xhr.responseJSON?.message || error), 'error');
+                            error: function(xhr) {
+                                showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
                             }
                         });
                     });
@@ -836,7 +784,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         $.ajax({
                             url: 'sessions.php',
                             type: 'POST',
-                            data: { action: 'get_session', session_id: sessionId },
+                            data: { action: 'get_session', session_id: sessionId, csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>' },
                             dataType: 'json',
                             success: function(response) {
                                 if (response.success) {
@@ -852,36 +800,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     showNotification(response.message, 'error');
                                 }
                             },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors de la récupération : ' + (xhr.responseJSON?.message || error), 'error');
-                            }
-                        });
-                    });
-
-                    // Update session
-                    $('#edit-session-form').on('submit', function(e) {
-                        e.preventDefault();
-                        const formData = $(this).serialize();
-                        if (!$('#edit_formation_id').val().trim() || !$('#edit_nom').val().trim()) {
-                            showNotification('Les champs Formation et Nom sont requis.', 'warning');
-                            return;
-                        }
-                        $.ajax({
-                            url: 'sessions.php',
-                            type: 'POST',
-                            data: formData,
-                            dataType: 'json',
-                            success: function(response) {
-                                if (response.success) {
-                                    showNotification(response.message || 'Session mise à jour avec succès.', 'success');
-                                    $('#editSessionModal').modal('hide');
-                                    table.ajax.reload();
-                                } else {
-                                    showNotification(response.message, 'error');
-                                }
-                            },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors de la mise à jour : ' + (xhr.responseJSON?.message || error), 'error');
+                            error: function(xhr) {
+                                showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
                             }
                         });
                     });
@@ -893,7 +813,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                             $.ajax({
                                 url: 'sessions.php',
                                 type: 'POST',
-                                data: { action: 'delete', session_id: sessionId },
+                                data: { action: 'delete', session_id: sessionId, csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>' },
                                 dataType: 'json',
                                 success: function(response) {
                                     if (response.success) {
@@ -903,8 +823,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                         showNotification(response.message, 'error');
                                     }
                                 },
-                                error: function(xhr, status, error) {
-                                    showNotification('Erreur serveur lors de la suppression : ' + (xhr.responseJSON?.message || error), 'error');
+                                error: function(xhr) {
+                                    showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
                                 }
                             });
                         }

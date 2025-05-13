@@ -28,8 +28,9 @@ try {
     $error = "Erreur de connexion à la base de données : " . $e->getMessage();
 }
 
-// Fetch members for responsible dropdown (filter by department)
+// Fetch members for responsible and enrollment dropdowns
 try {
+    // Responsible members (filtered by department)
     $stmt = $db->prepare("
         SELECT m.id, m.nom, m.prenom
         FROM members m
@@ -37,7 +38,12 @@ try {
         ORDER BY m.nom, m.prenom
     ");
     $stmt->execute();
-    $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $responsible_members = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // All members for enrollment
+    $stmt = $db->prepare("SELECT id, nom, prenom FROM members ORDER BY nom, prenom");
+    $stmt->execute();
+    $all_members = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Exception $e) {
     $error = "Erreur récupération membres : " . $e->getMessage();
 }
@@ -166,11 +172,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'delete' && $_
             throw new Exception("Impossible de supprimer : cette formation est utilisée dans les présences.");
         }
 
-        // Check if formation is used in members
-        $stmt = $db->prepare("SELECT COUNT(*) AS count FROM members WHERE formation_id = ?");
+        // Check if formation is used in member_formations
+        $stmt = $db->prepare("SELECT COUNT(*) AS count FROM member_formations WHERE formation_id = ?");
         $stmt->execute([$id]);
         if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
-            throw new Exception("Impossible de supprimer : cette formation est assignée à des membres.");
+            throw new Exception("Impossible de supprimer : cette formation a des membres inscrits.");
         }
 
         // Check if formation is used in sessions
@@ -224,6 +230,121 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_formation
     exit;
 }
 
+// Get Enrolled Members
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_enrolled_members') {
+    try {
+        $formation_id = $_POST['formation_id'] ?? '';
+        if (empty($formation_id)) throw new Exception("ID manquant.");
+
+        $stmt = $db->prepare("
+            SELECT m.id, m.nom, m.prenom
+            FROM member_formations mf
+            JOIN members m ON mf.member_id = m.id
+            WHERE mf.formation_id = ?
+            ORDER BY m.nom, m.prenom
+        ");
+        $stmt->execute([$formation_id]);
+        $enrolled_members = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode(['success' => true, 'enrolled_members' => $enrolled_members]);
+    } catch (Exception $e) {
+        error_log("Get enrolled members error: " . $e->getMessage());
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// Enroll Members
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'enroll_members' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
+    try {
+        $formation_id = trim($_POST['formation_id'] ?? '');
+        $member_ids = $_POST['member_ids'] ?? [];
+
+        if (empty($formation_id)) throw new Exception("ID de formation manquant.");
+        if (empty($member_ids)) throw new Exception("Aucun membre sélectionné.");
+
+        // Verify formation exists
+        $stmt = $db->prepare("SELECT id FROM formations WHERE id = ?");
+        $stmt->execute([$formation_id]);
+        if (!$stmt->fetch()) {
+            throw new Exception("Formation invalide.");
+        }
+
+        $inserted = 0;
+        foreach ($member_ids as $member_id) {
+            // Verify member exists
+            $stmt = $db->prepare("SELECT id FROM members WHERE id = ?");
+            $stmt->execute([$member_id]);
+            if (!$stmt->fetch()) {
+                continue; // Skip invalid member
+            }
+            // Check for existing enrollment
+            $stmt = $db->prepare("SELECT member_id FROM member_formations WHERE member_id = ? AND formation_id = ?");
+            $stmt->execute([$member_id, $formation_id]);
+            if ($stmt->fetch()) {
+                continue; // Skip already enrolled
+            }
+            // Enroll member
+            $stmt = $db->prepare("INSERT INTO member_formations (member_id, formation_id) VALUES (?, ?)");
+            $stmt->execute([$member_id, $formation_id]);
+            $inserted++;
+        }
+
+        logAction($_SESSION['user_id'], "Inscription de $inserted membre(s) à la formation: $formation_id", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        echo json_encode(['success' => true, 'message' => "$inserted membre(s) inscrit(s) avec succès."]);
+    } catch (Exception $e) {
+        error_log("Enroll members error: " . $e->getMessage());
+        logAction($_SESSION['user_id'], "Erreur inscription membres: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// Unenroll Members
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'unenroll_members' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
+    try {
+        $formation_id = trim($_POST['formation_id'] ?? '');
+        $member_ids = $_POST['member_ids'] ?? [];
+
+        if (empty($formation_id)) throw new Exception("ID de formation manquant.");
+        if (empty($member_ids)) throw new Exception("Aucun membre sélectionné.");
+
+        // Verify formation exists
+        $stmt = $db->prepare("SELECT id FROM formations WHERE id = ?");
+        $stmt->execute([$formation_id]);
+        if (!$stmt->fetch()) {
+            throw new Exception("Formation invalide.");
+        }
+
+        $deleted = 0;
+        foreach ($member_ids as $member_id) {
+            // Check if member has attendance records
+            $stmt = $db->prepare("SELECT COUNT(*) AS count FROM formation_attendance WHERE member_id = ? AND formation_id = ?");
+            $stmt->execute([$member_id, $formation_id]);
+            if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
+                continue; // Skip members with attendance
+            }
+            // Unenroll member
+            $stmt = $db->prepare("DELETE FROM member_formations WHERE member_id = ? AND formation_id = ?");
+            $stmt->execute([$member_id, $formation_id]);
+            if ($stmt->rowCount() > 0) {
+                $deleted++;
+            }
+        }
+
+        logAction($_SESSION['user_id'], "Désinscription de $deleted membre(s) de la formation: $formation_id", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        echo json_encode(['success' => true, 'message' => "$deleted membre(s) désinscrit(s) avec succès."]);
+    } catch (Exception $e) {
+        error_log("Unenroll members error: " . $e->getMessage());
+        logAction($_SESSION['user_id'], "Erreur désinscription membres: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
 // Handle AJAX DataTable Request
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
     $where = [];
@@ -240,7 +361,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                m.nom AS responsible_nom, 
                m.prenom AS responsible_prenom,
                (SELECT COUNT(*) FROM sessions s WHERE s.formation_id = f.id) AS session_count,
-               (SELECT COUNT(*) FROM sessions s WHERE s.formation_id = f.id AND s.teacher_id IS NOT NULL) AS teacher_assigned_count
+               (SELECT COUNT(*) FROM sessions s WHERE s.formation_id = f.id AND s.teacher_id IS NOT NULL) AS teacher_assigned_count,
+               (SELECT COUNT(*) FROM member_formations mf WHERE mf.formation_id = f.id) AS enrolled_member_count
         FROM formations f
         LEFT JOIN members m ON f.responsible_id = m.id
     ";
@@ -338,6 +460,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
             background-color: #e0a800;
             border-color: #d39e00;
         }
+        .btn-success {
+            background-color: #28a745;
+            border-color: #28a745;
+        }
+        .btn-success:hover {
+            background-color: #218838;
+            border-color: #1e7e34;
+        }
         .modal-content {
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -375,6 +505,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
         .toast-header {
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
+        }
+        #enrolled-members-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        .enrolled-member {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+        }
+        .enrolled-member .btn {
+            font-size: 12px;
         }
     </style>
 </head>
@@ -470,6 +616,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         <th>Responsable</th>
                         <th>Statut</th>
                         <th>Sessions (Enseignants)</th>
+                        <th>Membres Inscrits</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -524,7 +671,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                             <label for="create_responsible_id">Responsable *</label>
                                             <select class="form-control" id="create_responsible_id" name="responsible_id" required>
                                                 <option value="">Sélectionnez un responsable</option>
-                                                <?php foreach ($members as $member): ?>
+                                                <?php foreach ($responsible_members as $member): ?>
                                                     <option value="<?php echo htmlspecialchars($member['id']); ?>">
                                                         <?php echo htmlspecialchars($member['nom'] . ' ' . $member['prenom']); ?>
                                                     </option>
@@ -604,7 +751,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                             <label for="edit_responsible_id">Responsable *</label>
                                             <select class="form-control" id="edit_responsible_id" name="responsible_id" required>
                                                 <option value="">Sélectionnez un responsable</option>
-                                                <?php foreach ($members as $member): ?>
+                                                <?php foreach ($responsible_members as $member): ?>
                                                     <option value="<?php echo htmlspecialchars($member['id']); ?>">
                                                         <?php echo htmlspecialchars($member['nom'] . ' ' . $member['prenom']); ?>
                                                     </option>
@@ -654,6 +801,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                             <p><strong>Responsable:</strong> <span id="view_responsible"></span></p>
                             <p><strong>Statut:</strong> <span id="view_status"></span></p>
                             <p><strong>Sessions (Enseignants):</strong> <span id="view_sessions"></span></p>
+                            <p><strong>Membres Inscrits:</strong> <span id="view_enrolled_members"></span></p>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-dismiss="modal">Fermer</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Enroll Members Modal -->
+            <div class="modal fade" id="enrollMembersModal" tabindex="-1" role="dialog" aria-labelledby="enrollMembersModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-lg" role="document">
+                    <div class="modal-content">
+                        <div class="modal-header bg-success text-white">
+                            <h5 class="modal-title" id="enrollMembersModalLabel">Gérer les Inscriptions</h5>
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                                <span aria-hidden="true">×</span>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <input type="hidden" id="enroll_formation_id">
+                            <h6>Inscrire des Membres</h6>
+                            <div class="form-group">
+                                <label for="enroll_member_ids">Sélectionner les Membres *</label>
+                                <select class="form-control" id="enroll_member_ids" name="member_ids[]" multiple>
+                                    <?php foreach ($all_members as $member): ?>
+                                        <option value="<?php echo htmlspecialchars($member['id']); ?>">
+                                            <?php echo htmlspecialchars($member['nom'] . ' ' . $member['prenom'] . ' (' . $member['id'] . ')'); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <button type="button" class="btn btn-success mb-3" id="enroll-members-btn">Inscrire</button>
+                            <h6>Membres Inscrits</h6>
+                            <div id="enrolled-members-list"></div>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-dismiss="modal">Fermer</button>
@@ -668,9 +850,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
             <script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap4.min.js"></script>
             <script>
                 $(document).ready(function() {
-                    // Pass members data to JavaScript
-                    const members = <?php echo json_encode($members); ?>;
-
                     // Initialize DataTable with AJAX
                     const table = $('#formation-table').DataTable({
                         language: {
@@ -679,7 +858,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         order: [[2, 'desc']],
                         autoWidth: false,
                         columnDefs: [
-                            { width: '150px', targets: 8, className: 'text-center' },
+                            { width: '150px', targets: 9, className: 'text-center' },
                             { width: '10%', targets: 0 },
                             { width: '15%', targets: 1 },
                             { width: '15%', targets: 2 },
@@ -687,7 +866,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                             { width: '15%', targets: 4 },
                             { width: '15%', targets: 5 },
                             { width: '15%', targets: 6 },
-                            { width: '15%', targets: 7 }
+                            { width: '15%', targets: 7 },
+                            { width: '10%', targets: 8 }
                         ],
                         ajax: {
                             url: 'promotions.php?ajax=1',
@@ -724,6 +904,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     return `${data.session_count} (${data.teacher_assigned_count} enseignant${data.teacher_assigned_count !== 1 ? 's' : ''})`; 
                                 } 
                             },
+                            { 
+                                data: 'enrolled_member_count', 
+                                render: function(data) { 
+                                    return data || '0'; 
+                                } 
+                            },
                             {
                                 data: null,
                                 render: function(data, type, row) {
@@ -732,6 +918,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                             <button class="btn btn-sm btn-info view-formation" data-formation-id="${row.id}">Voir</button>
                                     `;
                                     <?php if (in_array($_SESSION['role'], ['admin', 'diacre'])): ?>
+                                        actions += `<button class="btn btn-sm btn-success enroll-members" data-formation-id="${row.id}">Inscriptions</button>`;
                                         actions += `<button class="btn btn-sm btn-warning edit-formation" data-formation-id="${row.id}">Modifier</button>`;
                                     <?php endif; ?>
                                     <?php if ($_SESSION['role'] === 'admin'): ?>
@@ -770,6 +957,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
 
                         body.text(message);
                         toast.toast('show');
+                    }
+
+                    // Load enrolled members
+                    function loadEnrolledMembers(formationId) {
+                        $.ajax({
+                            url: 'promotions.php',
+                            type: 'POST',
+                            data: { action: 'get_enrolled_members', formation_id: formationId },
+                            dataType: 'json',
+                            success: function(response) {
+                                if (response.success) {
+                                    let html = '';
+                                    if (response.enrolled_members.length === 0) {
+                                        html = '<p>Aucun membre inscrit.</p>';
+                                    } else {
+                                        response.enrolled_members.forEach(function(member) {
+                                            html += `
+                                                <div class="enrolled-member">
+                                                    <span>${member.nom} ${member.prenom} (${member.id})</span>
+                                                    <button class="btn btn-sm btn-danger unenroll-member" data-member-id="${member.id}">Désinscrire</button>
+                                                </div>
+                                            `;
+                                        });
+                                    }
+                                    $('#enrolled-members-list').html(html);
+                                } else {
+                                    showNotification(response.message, 'error');
+                                    $('#enrolled-members-list').html('<p>Erreur de chargement.</p>');
+                                }
+                            },
+                            error: function(xhr, status, error) {
+                                showNotification('Erreur serveur lors du chargement des membres : ' + (xhr.responseJSON?.message || error), 'error');
+                                $('#enrolled-members-list').html('<p>Erreur de chargement.</p>');
+                            }
+                        });
                     }
 
                     // Create formation form submission
@@ -821,6 +1043,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     $('#view_responsible').text(formation.responsible_nom && formation.responsible_prenom ? `${formation.responsible_nom} ${formation.responsible_prenom}` : '-');
                                     $('#view_status').text(<?php echo json_encode($status_labels); ?>[formation.status] || 'Inconnu');
                                     $('#view_sessions').text(`${formation.session_count} (${formation.teacher_assigned_count} enseignant${formation.teacher_assigned_count !== 1 ? 's' : ''})`);
+                                    $('#view_enrolled_members').text(formation.enrolled_member_count || '0');
                                     $('#viewFormationModal').modal('show');
                                 } else {
                                     showNotification(response.message, 'error');
@@ -909,6 +1132,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                 },
                                 error: function(xhr, status, error) {
                                     showNotification('Erreur serveur lors de la suppression : ' + (xhr.responseJSON?.message || error), 'error');
+                                }
+                            });
+                        }
+                    });
+
+                    // Enroll members modal
+                    $(document).on('click', '.enroll-members', function() {
+                        const formationId = $(this).data('formation-id');
+                        $('#enroll_formation_id').val(formationId);
+                        $('#enroll_member_ids').val([]);
+                        loadEnrolledMembers(formationId);
+                        $('#enrollMembersModal').modal('show');
+                    });
+
+                    // Enroll members button
+                    $('#enroll-members-btn').on('click', function() {
+                        const formationId = $('#enroll_formation_id').val();
+                        const memberIds = $('#enroll_member_ids').val();
+                        if (!memberIds || memberIds.length === 0) {
+                            showNotification('Veuillez sélectionner au moins un membre.', 'warning');
+                            return;
+                        }
+                        $.ajax({
+                            url: 'promotions.php',
+                            type: 'POST',
+                            data: { 
+                                action: 'enroll_members', 
+                                formation_id: formationId, 
+                                member_ids: memberIds 
+                            },
+                            dataType: 'json',
+                            success: function(response) {
+                                if (response.success) {
+                                    showNotification(response.message, 'success');
+                                    loadEnrolledMembers(formationId);
+                                    $('#enroll_member_ids').val([]);
+                                    table.ajax.reload();
+                                } else {
+                                    showNotification(response.message, 'error');
+                                }
+                            },
+                            error: function(xhr, status, error) {
+                                showNotification('Erreur serveur lors de l\'inscription : ' + (xhr.responseJSON?.message || error), 'error');
+                            }
+                        });
+                    });
+
+                    // Unenroll member
+                    $(document).on('click', '.unenroll-member', function() {
+                        const formationId = $('#enroll_formation_id').val();
+                        const memberId = $(this).data('member-id');
+                        if (confirm('Êtes-vous sûr de vouloir désinscrire ce membre ?')) {
+                            $.ajax({
+                                url: 'promotions.php',
+                                type: 'POST',
+                                data: { 
+                                    action: 'unenroll_members', 
+                                    formation_id: formationId, 
+                                    member_ids: [memberId] 
+                                },
+                                dataType: 'json',
+                                success: function(response) {
+                                    if (response.success) {
+                                        showNotification(response.message, 'success');
+                                        loadEnrolledMembers(formationId);
+                                        table.ajax.reload();
+                                    } else {
+                                        showNotification(response.message, 'error');
+                                    }
+                                },
+                                error: function(xhr, status, error) {
+                                    showNotification('Erreur serveur lors de la désinscription : ' + (xhr.responseJSON?.message || error), 'error');
                                 }
                             });
                         }

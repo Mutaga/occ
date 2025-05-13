@@ -28,6 +28,20 @@ try {
     $error = "Erreur de connexion à la base de données : " . $e->getMessage();
 }
 
+// Fetch members for responsible dropdown (filter by department)
+try {
+    $stmt = $db->prepare("
+        SELECT m.id, m.nom, m.prenom
+        FROM members m
+        WHERE m.departement IN ('Pastorat', 'Diaconat', 'Protocole') OR m.departement IS NULL
+        ORDER BY m.nom, m.prenom
+    ");
+    $stmt->execute();
+    $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $error = "Erreur récupération membres : " . $e->getMessage();
+}
+
 // Status translations
 $status_labels = [
     'active' => 'Actif',
@@ -43,9 +57,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'create' && in
         $date_debut = trim($_POST['date_debut'] ?? '');
         $date_fin = trim($_POST['date_fin'] ?? '');
         $status = trim($_POST['status'] ?? 'pending');
+        $responsible_id = trim($_POST['responsible_id'] ?? '');
 
-        if (empty($nom) || empty($promotion)) {
-            throw new Exception("Les champs Nom et Promotion sont requis.");
+        if (empty($nom) || empty($promotion) || empty($responsible_id)) {
+            throw new Exception("Les champs Nom, Promotion et Responsable sont requis.");
         }
         if (!in_array($status, ['active', 'pending', 'completed'])) {
             throw new Exception("Statut invalide.");
@@ -61,20 +76,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'create' && in
         }
 
         $stmt = $db->prepare("
-            INSERT INTO formations (nom, promotion, date_debut, date_fin, status)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO formations (nom, promotion, date_debut, date_fin, status, responsible_id)
+            VALUES (?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
             $nom,
             $promotion,
             $date_debut ?: null,
             $date_fin ?: null,
-            $status
+            $status,
+            $responsible_id
         ]);
 
         $formation_id = $db->lastInsertId();
 
-        logAction($_SESSION['user_id'], "Création formation: $formation_id (Nom: $nom, Promotion: $promotion, Statut: $status)", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction($_SESSION['user_id'], "Création formation: $formation_id (Nom: $nom, Promotion: $promotion, Statut: $status, Responsable: $responsible_id)", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Formation créée avec succès (ID: $formation_id)."]);
     } catch (Exception $e) {
         error_log("Create formation error: " . $e->getMessage());
@@ -94,9 +110,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'update' && in
         $date_debut = trim($_POST['date_debut'] ?? '');
         $date_fin = trim($_POST['date_fin'] ?? '');
         $status = trim($_POST['status'] ?? 'pending');
+        $responsible_id = trim($_POST['responsible_id'] ?? '');
 
-        if (empty($id) || empty($nom) || empty($promotion)) {
-            throw new Exception("Les champs ID, Nom et Promotion sont requis.");
+        if (empty($id) || empty($nom) || empty($promotion) || empty($responsible_id)) {
+            throw new Exception("Les champs ID, Nom, Promotion et Responsable sont requis.");
         }
         if (!in_array($status, ['active', 'pending', 'completed'])) {
             throw new Exception("Statut invalide.");
@@ -112,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'update' && in
         }
 
         $stmt = $db->prepare("
-            UPDATE formations SET nom = ?, promotion = ?, date_debut = ?, date_fin = ?, status = ?
+            UPDATE formations SET nom = ?, promotion = ?, date_debut = ?, date_fin = ?, status = ?, responsible_id = ?
             WHERE id = ?
         ");
         $stmt->execute([
@@ -121,10 +138,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'update' && in
             $date_debut ?: null,
             $date_fin ?: null,
             $status,
+            $responsible_id,
             $id
         ]);
 
-        logAction($_SESSION['user_id'], "Mise à jour formation: $id (Statut: $status)", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction($_SESSION['user_id'], "Mise à jour formation: $id (Statut: $status, Responsable: $responsible_id)", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Formation mise à jour avec succès (ID: $id)."]);
     } catch (Exception $e) {
         error_log("Update formation error: " . $e->getMessage());
@@ -155,6 +173,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'delete' && $_
             throw new Exception("Impossible de supprimer : cette formation est assignée à des membres.");
         }
 
+        // Check if formation is used in sessions
+        $stmt = $db->prepare("SELECT COUNT(*) AS count FROM sessions WHERE formation_id = ?");
+        $stmt->execute([$id]);
+        if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
+            throw new Exception("Impossible de supprimer : cette formation a des sessions associées.");
+        }
+
         $stmt = $db->prepare("DELETE FROM formations WHERE id = ?");
         $stmt->execute([$id]);
 
@@ -175,7 +200,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_formation
         $formation_id = $_POST['formation_id'] ?? '';
         if (empty($formation_id)) throw new Exception("ID manquant.");
 
-        $stmt = $db->prepare("SELECT * FROM formations WHERE id = ?");
+        $stmt = $db->prepare("
+            SELECT f.*, m.nom AS responsible_nom, m.prenom AS responsible_prenom
+            FROM formations f
+            LEFT JOIN members m ON f.responsible_id = m.id
+            WHERE f.id = ?
+        ");
         $stmt->execute([$formation_id]);
         $formation = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$formation) throw new Exception("Formation introuvable.");
@@ -201,15 +231,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
     $filter_status = $_GET['filter_status'] ?? '';
 
     if (!empty($filter_status)) {
-        $where[] = "status = ?";
+        $where[] = "f.status = ?";
         $params[] = $filter_status;
     }
 
-    $sql = "SELECT * FROM formations";
+    $sql = "
+        SELECT f.*, 
+               m.nom AS responsible_nom, 
+               m.prenom AS responsible_prenom,
+               (SELECT COUNT(*) FROM sessions s WHERE s.formation_id = f.id) AS session_count,
+               (SELECT COUNT(*) FROM sessions s WHERE s.formation_id = f.id AND s.teacher_id IS NOT NULL) AS teacher_assigned_count
+        FROM formations f
+        LEFT JOIN members m ON f.responsible_id = m.id
+    ";
     if ($where) {
         $sql .= " WHERE " . implode(" AND ", $where);
     }
-    $sql .= " ORDER BY promotion DESC";
+    $sql .= " ORDER BY f.promotion DESC";
 
     try {
         $stmt = $db->prepare($sql);
@@ -429,7 +467,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         <th>Promotion</th>
                         <th>Date Début</th>
                         <th>Date Fin</th>
+                        <th>Responsable</th>
                         <th>Statut</th>
+                        <th>Sessions (Enseignants)</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -453,7 +493,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     <div class="col-md-6">
                                         <div class="form-group">
                                             <label for="create_nom">Nom *</label>
-                                            <input type="text" class="form-control" id="create_nom" name="nom" required placeholder="ex: Isoko Classe 1">
+                                            <select class="form-control" id="create_nom" name="nom" required>
+                                                <option value="">Sélectionnez un nom</option>
+                                                <option value="Isoko Classe 1">Isoko Classe 1</option>
+                                                <option value="Isoko Classe 2">Isoko Classe 2</option>
+                                                <option value="Isoko Classe 3">Isoko Classe 3</option>
+                                            </select>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
@@ -472,6 +517,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                         <div class="form-group">
                                             <label for="create_date_fin">Date Fin</label>
                                             <input type="date" class="form-control" id="create_date_fin" name="date_fin">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="create_responsible_id">Responsable *</label>
+                                            <select class="form-control" id="create_responsible_id" name="responsible_id" required>
+                                                <option value="">Sélectionnez un responsable</option>
+                                                <?php foreach ($members as $member): ?>
+                                                    <option value="<?php echo htmlspecialchars($member['id']); ?>">
+                                                        <?php echo htmlspecialchars($member['nom'] . ' ' . $member['prenom']); ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
@@ -515,7 +573,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     <div class="col-md-6">
                                         <div class="form-group">
                                             <label for="edit_nom">Nom *</label>
-                                            <input type="text" class="form-control" id="edit_nom" name="nom" required>
+                                            <select class="form-control" id="edit_nom" name="nom" required>
+                                                <option value="">Sélectionnez un nom</option>
+                                                <option value="Isoko Classe 1">Isoko Classe 1</option>
+                                                <option value="Isoko Classe 2">Isoko Classe 2</option>
+                                                <option value="Isoko Classe 3">Isoko Classe 3</option>
+                                            </select>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
@@ -534,6 +597,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                         <div class="form-group">
                                             <label for="edit_date_fin">Date Fin</label>
                                             <input type="date" class="form-control" id="edit_date_fin" name="date_fin">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="edit_responsible_id">Responsable *</label>
+                                            <select class="form-control" id="edit_responsible_id" name="responsible_id" required>
+                                                <option value="">Sélectionnez un responsable</option>
+                                                <?php foreach ($members as $member): ?>
+                                                    <option value="<?php echo htmlspecialchars($member['id']); ?>">
+                                                        <?php echo htmlspecialchars($member['nom'] . ' ' . $member['prenom']); ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
@@ -575,7 +651,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                             <p><strong>Promotion:</strong> <span id="view_promotion"></span></p>
                             <p><strong>Date Début:</strong> <span id="view_date_debut"></span></p>
                             <p><strong>Date Fin:</strong> <span id="view_date_fin"></span></p>
+                            <p><strong>Responsable:</strong> <span id="view_responsible"></span></p>
                             <p><strong>Statut:</strong> <span id="view_status"></span></p>
+                            <p><strong>Sessions (Enseignants):</strong> <span id="view_sessions"></span></p>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-dismiss="modal">Fermer</button>
@@ -590,6 +668,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
             <script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap4.min.js"></script>
             <script>
                 $(document).ready(function() {
+                    // Pass members data to JavaScript
+                    const members = <?php echo json_encode($members); ?>;
+
                     // Initialize DataTable with AJAX
                     const table = $('#formation-table').DataTable({
                         language: {
@@ -598,13 +679,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         order: [[2, 'desc']],
                         autoWidth: false,
                         columnDefs: [
-                            { width: '150px', targets: 6, className: 'text-center' },
+                            { width: '150px', targets: 8, className: 'text-center' },
                             { width: '10%', targets: 0 },
-                            { width: '20%', targets: 1 },
+                            { width: '15%', targets: 1 },
                             { width: '15%', targets: 2 },
                             { width: '15%', targets: 3 },
                             { width: '15%', targets: 4 },
-                            { width: '15%', targets: 5 }
+                            { width: '15%', targets: 5 },
+                            { width: '15%', targets: 6 },
+                            { width: '15%', targets: 7 }
                         ],
                         ajax: {
                             url: 'promotions.php?ajax=1',
@@ -621,10 +704,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                             { data: 'date_debut', render: function(data) { return data || '-'; } },
                             { data: 'date_fin', render: function(data) { return data || '-'; } },
                             { 
+                                data: null, 
+                                render: function(data) { 
+                                    return data.responsible_nom && data.responsible_prenom 
+                                        ? `${data.responsible_nom} ${data.responsible_prenom}` 
+                                        : '-'; 
+                                } 
+                            },
+                            { 
                                 data: 'status', 
                                 render: function(data) { 
                                     const labels = <?php echo json_encode($status_labels); ?>;
                                     return labels[data] || 'Inconnu'; 
+                                } 
+                            },
+                            { 
+                                data: null, 
+                                render: function(data) { 
+                                    return `${data.session_count} (${data.teacher_assigned_count} enseignant${data.teacher_assigned_count !== 1 ? 's' : ''})`; 
                                 } 
                             },
                             {
@@ -675,12 +772,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         toast.toast('show');
                     }
 
-                    // Create formation
+                    // Create formation form submission
                     $('#create-formation-form').on('submit', function(e) {
                         e.preventDefault();
                         const formData = $(this).serialize();
-                        if (!$('#create_nom').val().trim() || !$('#create_promotion').val().trim()) {
-                            showNotification('Les champs Nom et Promotion sont requis.', 'warning');
+                        if (!$('#create_nom').val().trim() || !$('#create_promotion').val().trim() || 
+                            !$('#create_responsible_id').val().trim()) {
+                            showNotification('Les champs Nom, Promotion et Responsable sont requis.', 'warning');
                             return;
                         }
                         $.ajax({
@@ -707,14 +805,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                     // View formation
                     $(document).on('click', '.view-formation', function() {
                         const formationId = $(this).data('formation-id');
-                        console.log('Fetching formation:', formationId);
                         $.ajax({
                             url: 'promotions.php',
                             type: 'POST',
                             data: { action: 'get_formation', formation_id: formationId },
                             dataType: 'json',
                             success: function(response) {
-                                console.log('Response:', response);
                                 if (response.success) {
                                     const formation = response.formation;
                                     $('#view_id').text(formation.id);
@@ -722,7 +818,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     $('#view_promotion').text(formation.promotion);
                                     $('#view_date_debut').text(formation.date_debut || '-');
                                     $('#view_date_fin').text(formation.date_fin || '-');
+                                    $('#view_responsible').text(formation.responsible_nom && formation.responsible_prenom ? `${formation.responsible_nom} ${formation.responsible_prenom}` : '-');
                                     $('#view_status').text(<?php echo json_encode($status_labels); ?>[formation.status] || 'Inconnu');
+                                    $('#view_sessions').text(`${formation.session_count} (${formation.teacher_assigned_count} enseignant${formation.teacher_assigned_count !== 1 ? 's' : ''})`);
                                     $('#viewFormationModal').modal('show');
                                 } else {
                                     showNotification(response.message, 'error');
@@ -751,6 +849,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     $('#edit_date_debut').val(formation.date_debut || '');
                                     $('#edit_date_fin').val(formation.date_fin || '');
                                     $('#edit_status').val(formation.status);
+                                    $('#edit_responsible_id').val(formation.responsible_id);
                                     $('#editFormationModal').modal('show');
                                 } else {
                                     showNotification(response.message, 'error');
@@ -766,8 +865,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                     $('#edit-formation-form').on('submit', function(e) {
                         e.preventDefault();
                         const formData = $(this).serialize();
-                        if (!$('#edit_nom').val().trim() || !$('#edit_promotion').val().trim()) {
-                            showNotification('Les champs Nom et Promotion sont requis.', 'warning');
+                        if (!$('#edit_nom').val().trim() || !$('#edit_promotion').val().trim() || 
+                            !$('#edit_responsible_id').val().trim()) {
+                            showNotification('Les champs Nom, Promotion et Responsable sont requis.', 'warning');
                             return;
                         }
                         $.ajax({

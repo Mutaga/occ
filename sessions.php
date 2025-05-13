@@ -2,7 +2,7 @@
 // Enable error reporting for debugging
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
-error_reporting(E_ALL & ~E_NOTICE);
+error_reporting(E_ALL);
 
 session_start();
 require_once 'config.php';
@@ -13,13 +13,13 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// Log access
+// Log access to confirm file usage
 logAction($_SESSION['user_id'], "Accès à sessions.php", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
 
-// Initialize messages and filters
+// Initialize messages and filter
 $error = null;
 $success = null;
-$filter_formation = $_GET['filter_formation'] ?? '';
+$filter_status = $_GET['filter_status'] ?? '';
 
 // Database connection
 try {
@@ -28,57 +28,86 @@ try {
     $error = "Erreur de connexion à la base de données : " . $e->getMessage();
 }
 
+// Fetch formations for dropdown
+try {
+    $stmt = $db->prepare("
+        SELECT id, nom, promotion
+        FROM formations
+        ORDER BY promotion DESC, nom
+    ");
+    $stmt->execute();
+    $formations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $error = "Erreur récupération formations : " . $e->getMessage();
+}
+
+// Fetch teachers for dropdown
+try {
+    $stmt = $db->prepare("
+        SELECT id, first_name, last_name
+        FROM teachers
+        ORDER BY last_name, first_name
+    ");
+    $stmt->execute();
+    $teachers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $error = "Erreur récupération enseignants : " . $e->getMessage();
+}
+
+// Status translations
+$status_labels = [
+    'planned' => 'Planifié',
+    'completed' => 'Terminé',
+    'cancelled' => 'Annulé'
+];
+
 // Create Session
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'create' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
     try {
         $formation_id = trim($_POST['formation_id'] ?? '');
+        $teacher_id = trim($_POST['teacher_id'] ?? '') ?: null;
         $nom = trim($_POST['nom'] ?? '');
-        $date_session = trim($_POST['date_session'] ?? '');
-        $teacher_id = trim($_POST['teacher_id'] ?? '');
+        $date_session = trim($_POST['date_session'] ?? '') ?: null;
+        $status = trim($_POST['status'] ?? 'planned');
 
-        if (empty($formation_id) || empty($nom) || empty($teacher_id)) {
-            throw new Exception("Les champs Formation, Nom et Enseignant sont requis.");
+        if (empty($formation_id) || empty($nom)) {
+            throw new Exception("Les champs Formation et Nom de la session sont requis.");
         }
-        // Validate formation and get responsible_id
-        $stmt = $db->prepare("SELECT responsible_id, date_debut, date_fin FROM formations WHERE id = ?");
+        if (!in_array($status, ['planned', 'completed', 'cancelled'])) {
+            throw new Exception("Statut invalide.");
+        }
+
+        // Check if formation exists
+        $stmt = $db->prepare("SELECT id FROM formations WHERE id = ?");
         $stmt->execute([$formation_id]);
-        $formation = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$formation) {
-            throw new Exception("Formation introuvable.");
-        }
-        $responsible_id = $formation['responsible_id'];
-        if (empty($responsible_id)) {
-            throw new Exception("Aucun responsable défini pour cette formation.");
-        }
-        // Validate teacher
-        $stmt = $db->prepare("SELECT id FROM members WHERE id = ? AND role IN ('pastor', 'diacre')");
-        $stmt->execute([$teacher_id]);
         if (!$stmt->fetch()) {
-            throw new Exception("Enseignant invalide ou non autorisé.");
+            throw new Exception("Formation invalide.");
         }
-        // Validate date
-        if ($date_session && $formation['date_debut'] && $date_session < $formation['date_debut']) {
-            throw new Exception("La date de la session doit être postérieure ou égale à la date de début de la formation.");
-        }
-        if ($date_session && $formation['date_fin'] && $date_session > $formation['date_fin']) {
-            throw new Exception("La date de la session doit être antérieure ou égale à la date de fin de la formation.");
-        }
-        // Check for duplicate session
-        $stmt = $db->prepare("SELECT id FROM sessions WHERE formation_id = ? AND nom = ? AND date_session = ?");
-        $stmt->execute([$formation_id, $nom, $date_session]);
-        if ($stmt->fetch()) {
-            throw new Exception("Une session avec ce nom, cette formation et cette date existe déjà.");
+
+        // Check if teacher exists (if provided)
+        if ($teacher_id) {
+            $stmt = $db->prepare("SELECT id FROM teachers WHERE id = ?");
+            $stmt->execute([$teacher_id]);
+            if (!$stmt->fetch()) {
+                throw new Exception("Enseignant invalide.");
+            }
         }
 
         $stmt = $db->prepare("
-            INSERT INTO sessions (formation_id, nom, date_session, teacher_id, responsible_id)
+            INSERT INTO sessions (formation_id, teacher_id, nom, date_session, status)
             VALUES (?, ?, ?, ?, ?)
         ");
-        $stmt->execute([$formation_id, $nom, $date_session ?: null, $teacher_id, $responsible_id]);
+        $stmt->execute([
+            $formation_id,
+            $teacher_id,
+            $nom,
+            $date_session,
+            $status
+        ]);
 
         $session_id = $db->lastInsertId();
 
-        logAction($_SESSION['user_id'], "Création session: $session_id (Nom: $nom, Formation ID: $formation_id, Enseignant ID: $teacher_id)", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction($_SESSION['user_id'], "Création session: $session_id (Formation: $formation_id, Nom: $nom, Statut: $status, Enseignant: " . ($teacher_id ?: 'Aucun') . ")", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Session créée avec succès (ID: $session_id)."]);
     } catch (Exception $e) {
         error_log("Create session error: " . $e->getMessage());
@@ -94,52 +123,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'update' && in
     try {
         $id = trim($_POST['id'] ?? '');
         $formation_id = trim($_POST['formation_id'] ?? '');
+        $teacher_id = trim($_POST['teacher_id'] ?? '') ?: null;
         $nom = trim($_POST['nom'] ?? '');
-        $date_session = trim($_POST['date_session'] ?? '');
-        $teacher_id = trim($_POST['teacher_id'] ?? '');
+        $date_session = trim($_POST['date_session'] ?? '') ?: null;
+        $status = trim($_POST['status'] ?? 'planned');
 
-        if (empty($id) || empty($formation_id) || empty($nom) || empty($teacher_id)) {
-            throw new Exception("Les champs ID, Formation, Nom et Enseignant sont requis.");
+        if (empty($id) || empty($formation_id) || empty($nom)) {
+            throw new Exception("Les champs ID, Formation et Nom de la session sont requis.");
         }
-        // Validate formation and get responsible_id
-        $stmt = $db->prepare("SELECT responsible_id, date_debut, date_fin FROM formations WHERE id = ?");
-        $stmt->execute([$formation_id]);
-        $formation = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$formation) {
-            throw new Exception("Formation introuvable.");
+        if (!in_array($status, ['planned', 'completed', 'cancelled'])) {
+            throw new Exception("Statut invalide.");
         }
-        $responsible_id = $formation['responsible_id'];
-        if (empty($responsible_id)) {
-            throw new Exception("Aucun responsable défini pour cette formation.");
-        }
-        // Validate teacher
-        $stmt = $db->prepare("SELECT id FROM members WHERE id = ? AND role IN ('pastor', 'diacre')");
-        $stmt->execute([$teacher_id]);
+
+        // Check if session exists
+        $stmt = $db->prepare("SELECT id FROM sessions WHERE id = ?");
+        $stmt->execute([$id]);
         if (!$stmt->fetch()) {
-            throw new Exception("Enseignant invalide ou non autorisé.");
+            throw new Exception("Session introuvable.");
         }
-        // Validate date
-        if ($date_session && $formation['date_debut'] && $date_session < $formation['date_debut']) {
-            throw new Exception("La date de la session doit être postérieure ou égale à la date de début de la formation.");
+
+        // Check if formation exists
+        $stmt = $db->prepare("SELECT id FROM formations WHERE id = ?");
+        $stmt->execute([$formation_id]);
+        if (!$stmt->fetch()) {
+            throw new Exception("Formation invalide.");
         }
-        if ($date_session && $formation['date_fin'] && $date_session > $formation['date_fin']) {
-            throw new Exception("La date de la session doit être antérieure ou égale à la date de fin de la formation.");
-        }
-        // Check for duplicate session (excluding current record)
-        $stmt = $db->prepare("SELECT id FROM sessions WHERE formation_id = ? AND nom = ? AND date_session = ? AND id != ?");
-        $stmt->execute([$formation_id, $nom, $date_session, $id]);
-        if ($stmt->fetch()) {
-            throw new Exception("Une session avec ce nom, cette formation et cette date existe déjà.");
+
+        // Check if teacher exists (if provided)
+        if ($teacher_id) {
+            $stmt = $db->prepare("SELECT id FROM teachers WHERE id = ?");
+            $stmt->execute([$teacher_id]);
+            if (!$stmt->fetch()) {
+                throw new Exception("Enseignant invalide.");
+            }
         }
 
         $stmt = $db->prepare("
             UPDATE sessions 
-            SET formation_id = ?, nom = ?, date_session = ?, teacher_id = ?, responsible_id = ?
+            SET formation_id = ?, teacher_id = ?, nom = ?, date_session = ?, status = ?
             WHERE id = ?
         ");
-        $stmt->execute([$formation_id, $nom, $date_session ?: null, $teacher_id, $responsible_id, $id]);
+        $stmt->execute([
+            $formation_id,
+            $teacher_id,
+            $nom,
+            $date_session,
+            $status,
+            $id
+        ]);
 
-        logAction($_SESSION['user_id'], "Mise à jour session: $id (Nom: $nom, Enseignant ID: $teacher_id)", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction($_SESSION['user_id'], "Mise à jour session: $id (Formation: $formation_id, Statut: $status, Enseignant: " . ($teacher_id ?: 'Aucun') . ")", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Session mise à jour avec succès (ID: $id)."]);
     } catch (Exception $e) {
         error_log("Update session error: " . $e->getMessage());
@@ -157,10 +190,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'delete' && $_
         if (empty($id)) throw new Exception("ID manquant.");
 
         // Check if session is used in formation_attendance
-        $stmt = $db->prepare("SELECT COUNT(*) AS count FROM formation_attendance WHERE session_id = ?");
+        $stmt = $db->prepare("SELECT COUNT(*) AS count FROM formation_attendance WHERE formation_id = (SELECT formation_id FROM sessions WHERE id = ?)");
         $stmt->execute([$id]);
         if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
-            throw new Exception("Impossible de supprimer : cette session est utilisée dans les présences.");
+            throw new Exception("Impossible de supprimer : cette session est liée à des présences.");
         }
 
         $stmt = $db->prepare("DELETE FROM sessions WHERE id = ?");
@@ -185,19 +218,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_session')
 
         $stmt = $db->prepare("
             SELECT s.*, 
-                   f.nom AS formation_nom, 
-                   f.promotion AS formation_promotion,
-                   CONCAT(t.nom, ' ', t.prenom) AS teacher_name,
-                   CONCAT(r.nom, ' ', r.prenom) AS responsible_name
-            FROM sessions s 
-            JOIN formations f ON s.formation_id = f.id 
-            JOIN members t ON s.teacher_id = t.id
-            JOIN members r ON s.responsible_id = r.id
+                   f.nom AS formation_nom, f.promotion AS formation_promotion,
+                   t.first_name AS teacher_first_name, t.last_name AS teacher_last_name
+            FROM sessions s
+            LEFT JOIN formations f ON s.formation_id = f.id
+            LEFT JOIN teachers t ON s.teacher_id = t.id
             WHERE s.id = ?
         ");
         $stmt->execute([$session_id]);
         $session = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$session) throw new Exception("Session introuvable.");
+
+        // Ensure valid status
+        if (!isset($status_labels[$session['status']])) {
+            $session['status'] = 'planned';
+        }
 
         echo json_encode(['success' => true, 'session' => $session]);
     } catch (Exception $e) {
@@ -210,70 +245,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_session')
 
 // Handle AJAX DataTable Request
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
-    ob_clean();
+    $where = [];
+    $params = [];
+    $filter_status = $_GET['filter_status'] ?? '';
+
+    if (!empty($filter_status)) {
+        $where[] = "s.status = ?";
+        $params[] = $filter_status;
+    }
+
+    $sql = "
+        SELECT s.*, 
+               f.nom AS formation_nom, f.promotion AS formation_promotion,
+               t.first_name AS teacher_first_name, t.last_name AS teacher_last_name
+        FROM sessions s
+        LEFT JOIN formations f ON s.formation_id = f.id
+        LEFT JOIN teachers t ON s.teacher_id = t.id
+    ";
+    if ($where) {
+        $sql .= " WHERE " . implode(" AND ", $where);
+    }
+    $sql .= " ORDER BY s.date_session DESC, s.nom";
+
     try {
-        $stmt = $db->query("SHOW TABLES LIKE 'sessions'");
-        if ($stmt->rowCount() === 0) {
-            throw new Exception("Tableau 'sessions' n'existe pas dans la base de données.");
-        }
-
-        $where = [];
-        $params = [];
-        $filter_formation = $_GET['filter_formation'] ?? '';
-
-        if (!empty($filter_formation)) {
-            $where[] = "s.formation_id = ?";
-            $params[] = $filter_formation;
-        }
-
-        $sql = "
-            SELECT s.*, 
-                   f.nom AS formation_nom, 
-                   f.promotion AS formation_promotion,
-                   CONCAT(t.nom, ' ', t.prenom) AS teacher_name,
-                   CONCAT(r.nom, ' ', r.prenom) AS responsible_name
-            FROM sessions s 
-            JOIN formations f ON s.formation_id = f.id
-            JOIN members t ON s.teacher_id = t.id
-            JOIN members r ON s.responsible_id = r.id
-        ";
-        if ($where) {
-            $sql .= " WHERE " . implode(" AND ", $where);
-        }
-        $sql .= " ORDER BY s.date_session DESC";
-
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
         $sessions = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        header('Content-Type: application/json');
         echo json_encode(['sessions' => $sessions]);
     } catch (Exception $e) {
         error_log("AJAX fetch error: " . $e->getMessage());
         http_response_code(500);
-        header('Content-Type: application/json');
         echo json_encode(['error' => "Erreur récupération sessions : " . $e->getMessage()]);
     }
     exit;
-}
-
-// Fetch formations for dropdown
-try {
-    $stmt = $db->prepare("SELECT id, nom, promotion FROM formations ORDER BY nom, promotion");
-    $stmt->execute();
-    $formations = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (Exception $e) {
-    $error = "Erreur récupération formations : " . $e->getMessage();
-    $formations = [];
-}
-
-// Fetch pastors and deacons for teacher dropdown
-try {
-    $stmt = $db->prepare("SELECT id, nom, prenom FROM members WHERE role IN ('pastor', 'diacre') ORDER BY nom, prenom");
-    $stmt->execute();
-    $teachers = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (Exception $e) {
-    $error = "Erreur récupération enseignants : " . $e->getMessage();
-    $teachers = [];
 }
 ?>
 
@@ -286,7 +290,6 @@ try {
     <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap4.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css">
     <style>
         body {
             background-color: #f4f6f9;
@@ -391,18 +394,6 @@ try {
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         }
-        .select2-container--default .select2-selection--single {
-            height: 38px;
-            padding: 6px 12px;
-            border: 1px solid #ced4da;
-            border-radius: 4px;
-        }
-        .select2-container--default .select2-selection--single .select2-selection__rendered {
-            line-height: 26px;
-        }
-        .select2-container--default .select2-selection--single .select2-selection__arrow {
-            height: 36px;
-        }
     </style>
 </head>
 <body>
@@ -461,12 +452,12 @@ try {
                     <div class="row">
                         <div class="col-md-3">
                             <div class="form-group">
-                                <label for="filter_formation">Formation</label>
-                                <select class="form-control" id="filter_formation" name="filter_formation">
-                                    <option value="">Toutes</option>
-                                    <?php foreach ($formations as $formation): ?>
-                                        <option value="<?php echo htmlspecialchars($formation['id']); ?>" <?php echo $filter_formation === $formation['id'] ? 'selected' : ''; ?>>
-                                            <?php echo htmlspecialchars($formation['nom'] . ' (' . $formation['promotion'] . ')'); ?>
+                                <label for="filter_status">Statut</label>
+                                <select class="form-control" id="filter_status" name="filter_status">
+                                    <option value="">Tous</option>
+                                    <?php foreach ($status_labels as $value => $label): ?>
+                                        <option value="<?php echo htmlspecialchars($value); ?>" <?php echo $filter_status === $value ? 'selected' : ''; ?>>
+                                            <?php echo htmlspecialchars($label); ?>
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
@@ -492,9 +483,9 @@ try {
                         <th>ID</th>
                         <th>Formation</th>
                         <th>Nom</th>
-                        <th>Date</th>
                         <th>Enseignant</th>
-                        <th>Responsable</th>
+                        <th>Date</th>
+                        <th>Statut</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -519,10 +510,10 @@ try {
                                         <div class="form-group">
                                             <label for="create_formation_id">Formation *</label>
                                             <select class="form-control" id="create_formation_id" name="formation_id" required>
-                                                <option value="">Sélectionner une formation</option>
+                                                <option value="">Sélectionnez une formation</option>
                                                 <?php foreach ($formations as $formation): ?>
                                                     <option value="<?php echo htmlspecialchars($formation['id']); ?>">
-                                                        <?php echo htmlspecialchars($formation['nom'] . ' (' . $formation['promotion'] . ')'); ?>
+                                                        <?php echo htmlspecialchars($formation['nom'] . ' - ' . $formation['promotion']); ?>
                                                     </option>
                                                 <?php endforeach; ?>
                                             </select>
@@ -531,23 +522,17 @@ try {
                                     <div class="col-md-6">
                                         <div class="form-group">
                                             <label for="create_nom">Nom *</label>
-                                            <input type="text" class="form-control" id="create_nom" name="nom" required placeholder="ex: Session 1: Introduction">
+                                            <input type="text" class="form-control" id="create_nom" name="nom" required placeholder="ex: Chapitre 1">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="create_date_session">Date Session</label>
-                                            <input type="date" class="form-control" id="create_date_session" name="date_session">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="create_teacher_id">Enseignant *</label>
-                                            <select class="form-control select2" id="create_teacher_id" name="teacher_id" required>
-                                                <option value="">Sélectionner un enseignant</option>
+                                            <label for="create_teacher_id">Enseignant</label>
+                                            <select class="form-control" id="create_teacher_id" name="teacher_id">
+                                                <option value="">Aucun</option>
                                                 <?php foreach ($teachers as $teacher): ?>
                                                     <option value="<?php echo htmlspecialchars($teacher['id']); ?>">
-                                                        <?php echo htmlspecialchars($teacher['nom'] . ' ' . $teacher['prenom']); ?>
+                                                        <?php echo htmlspecialchars($teacher['first_name'] . ' ' . $teacher['last_name']); ?>
                                                     </option>
                                                 <?php endforeach; ?>
                                             </select>
@@ -555,9 +540,20 @@ try {
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="create_responsible">Responsable</label>
-                                            <input type="text" class="form-control" id="create_responsible" readonly>
-                                            <input type="hidden" id="create_responsible_id" name="responsible_id">
+                                            <label for="create_date_session">Date</label>
+                                            <input type="date" class="form-control" id="create_date_session" name="date_session">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="create_status">Statut *</label>
+                                            <select class="form-control" id="create_status" name="status" required>
+                                                <?php foreach ($status_labels as $value => $label): ?>
+                                                    <option value="<?php echo htmlspecialchars($value); ?>" <?php echo $value === 'planned' ? 'selected' : ''; ?>>
+                                                        <?php echo htmlspecialchars($label); ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
                                         </div>
                                     </div>
                                 </div>
@@ -590,10 +586,10 @@ try {
                                         <div class="form-group">
                                             <label for="edit_formation_id">Formation *</label>
                                             <select class="form-control" id="edit_formation_id" name="formation_id" required>
-                                                <option value="">Sélectionner une formation</option>
+                                                <option value="">Sélectionnez une formation</option>
                                                 <?php foreach ($formations as $formation): ?>
                                                     <option value="<?php echo htmlspecialchars($formation['id']); ?>">
-                                                        <?php echo htmlspecialchars($formation['nom'] . ' (' . $formation['promotion'] . ')'); ?>
+                                                        <?php echo htmlspecialchars($formation['nom'] . ' - ' . $formation['promotion']); ?>
                                                     </option>
                                                 <?php endforeach; ?>
                                             </select>
@@ -607,18 +603,12 @@ try {
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="edit_date_session">Date Session</label>
-                                            <input type="date" class="form-control" id="edit_date_session" name="date_session">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group">
-                                            <label for="edit_teacher_id">Enseignant *</label>
-                                            <select class="form-control select2" id="edit_teacher_id" name="teacher_id" required>
-                                                <option value="">Sélectionner un enseignant</option>
+                                            <label for="edit_teacher_id">Enseignant</label>
+                                            <select class="form-control" id="edit_teacher_id" name="teacher_id">
+                                                <option value="">Aucun</option>
                                                 <?php foreach ($teachers as $teacher): ?>
                                                     <option value="<?php echo htmlspecialchars($teacher['id']); ?>">
-                                                        <?php echo htmlspecialchars($teacher['nom'] . ' ' . $teacher['prenom']); ?>
+                                                        <?php echo htmlspecialchars($teacher['first_name'] . ' ' . $teacher['last_name']); ?>
                                                     </option>
                                                 <?php endforeach; ?>
                                             </select>
@@ -626,9 +616,20 @@ try {
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="edit_responsible">Responsable</label>
-                                            <input type="text" class="form-control" id="edit_responsible" readonly>
-                                            <input type="hidden" id="edit_responsible_id" name="responsible_id">
+                                            <label for="edit_date_session">Date</label>
+                                            <input type="date" class="form-control" id="edit_date_session" name="date_session">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="edit_status">Statut *</label>
+                                            <select class="form-control" id="edit_status" name="status" required>
+                                                <?php foreach ($status_labels as $value => $label): ?>
+                                                    <option value="<?php echo htmlspecialchars($value); ?>">
+                                                        <?php echo htmlspecialchars($label); ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
                                         </div>
                                     </div>
                                 </div>
@@ -656,9 +657,9 @@ try {
                             <p><strong>ID:</strong> <span id="view_id"></span></p>
                             <p><strong>Formation:</strong> <span id="view_formation"></span></p>
                             <p><strong>Nom:</strong> <span id="view_nom"></span></p>
-                            <p><strong>Date Session:</strong> <span id="view_date_session"></span></p>
                             <p><strong>Enseignant:</strong> <span id="view_teacher"></span></p>
-                            <p><strong>Responsable:</strong> <span id="view_responsible"></span></p>
+                            <p><strong>Date:</strong> <span id="view_date_session"></span></p>
+                            <p><strong>Statut:</strong> <span id="view_status"></span></p>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-dismiss="modal">Fermer</button>
@@ -671,29 +672,21 @@ try {
             <script src="assets/bootstrap/js/bootstrap.min.js"></script>
             <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
             <script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap4.min.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
             <script>
                 $(document).ready(function() {
-                    // Initialize Select2
-                    $('.select2').select2({
-                        placeholder: "Sélectionner un enseignant",
-                        allowClear: true,
-                        width: '100%'
-                    });
-
                     // Initialize DataTable with AJAX
                     const table = $('#session-table').DataTable({
                         language: {
                             url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/fr-FR.json'
                         },
-                        order: [[3, 'desc']],
+                        order: [[4, 'desc']],
                         autoWidth: false,
                         columnDefs: [
                             { width: '150px', targets: 6, className: 'text-center' },
                             { width: '10%', targets: 0 },
                             { width: '20%', targets: 1 },
                             { width: '20%', targets: 2 },
-                            { width: '15%', targets: 3 },
+                            { width: '20%', targets: 3 },
                             { width: '15%', targets: 4 },
                             { width: '15%', targets: 5 }
                         ],
@@ -701,32 +694,37 @@ try {
                             url: 'sessions.php?ajax=1',
                             type: 'GET',
                             data: function(d) {
-                                d.filter_formation = $('#filter_formation').val();
+                                d.filter_status = $('#filter_status').val();
                             },
-                            dataSrc: function(json) {
-                                if (json.error) {
-                                    alert('Erreur AJAX: ' + json.error);
-                                    return [];
-                                }
-                                return json.sessions;
-                            },
-                            error: function(xhr, error, thrown) {
-                                console.log('AJAX error:', xhr.responseText);
-                                alert('Erreur de chargement des données. Vérifiez la console pour plus de détails.');
-                            }
+                            dataSrc: 'sessions'
                         },
                         columns: [
                             { data: 'id' },
                             { 
                                 data: null, 
                                 render: function(data) { 
-                                    return data.formation_nom + ' (' + data.formation_promotion + ')'; 
+                                    return data.formation_nom && data.formation_promotion 
+                                        ? `${data.formation_nom} - ${data.formation_promotion}` 
+                                        : '-'; 
                                 } 
                             },
                             { data: 'nom' },
+                            { 
+                                data: null, 
+                                render: function(data) { 
+                                    return data.teacher_first_name && data.teacher_last_name 
+                                        ? `${data.teacher_first_name} ${data.teacher_last_name}` 
+                                        : 'Aucun'; 
+                                } 
+                            },
                             { data: 'date_session', render: function(data) { return data || '-'; } },
-                            { data: 'teacher_name' },
-                            { data: 'responsible_name' },
+                            { 
+                                data: 'status', 
+                                render: function(data) { 
+                                    const labels = <?php echo json_encode($status_labels); ?>;
+                                    return labels[data] || 'Inconnu'; 
+                                } 
+                            },
                             {
                                 data: null,
                                 render: function(data, type, row) {
@@ -775,74 +773,12 @@ try {
                         toast.toast('show');
                     }
 
-                    // Fetch responsible when formation changes
-                    function updateResponsible(formationId, responsibleInput, responsibleIdInput) {
-                        if (!formationId) {
-                            responsibleInput.val('');
-                            responsibleIdInput.val('');
-                            return;
-                        }
-                        $.ajax({
-                            url: 'sessions.php',
-                            type: 'POST',
-                            data: { action: 'get_formation_responsible', formation_id: formationId },
-                            dataType: 'json',
-                            success: function(response) {
-                                if (response.success) {
-                                    responsibleInput.val(response.responsible_name || 'Aucun');
-                                    responsibleIdInput.val(response.responsible_id || '');
-                                } else {
-                                    responsibleInput.val('Erreur');
-                                    responsibleIdInput.val('');
-                                    showNotification(response.message, 'error');
-                                }
-                            },
-                            error: function(xhr, status, error) {
-                                responsibleInput.val('Erreur');
-                                responsibleIdInput.val('');
-                                showNotification('Erreur récupération responsable : ' + (xhr.responseJSON?.message || error), 'error');
-                            }
-                        });
-                    }
-
-                    // Handle get_formation_responsible action
-                    <?php
-                    if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'get_formation_responsible') {
-                        try {
-                            $formation_id = $_POST['formation_id'] ?? '';
-                            if (empty($formation_id)) throw new Exception("ID formation manquant.");
-
-                            $stmt = $db->prepare("
-                                SELECT f.responsible_id, 
-                                       CONCAT(m.nom, ' ', m.prenom) AS responsible_name
-                                FROM formations f
-                                LEFT JOIN members m ON f.responsible_id = m.id
-                                WHERE f.id = ?
-                            ");
-                            $stmt->execute([$formation_id]);
-                            $formation = $stmt->fetch(PDO::FETCH_ASSOC);
-                            if (!$formation) throw new Exception("Formation introuvable.");
-
-                            echo json_encode([
-                                'success' => true,
-                                'responsible_id' => $formation['responsible_id'],
-                                'responsible_name' => $formation['responsible_name'] ?: 'Aucun'
-                            ]);
-                        } catch (Exception $e) {
-                            error_log("Get formation responsible error: " . $e->getMessage());
-                            http_response_code(500);
-                            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
-                        }
-                        exit;
-                    }
-                    ?>
-
-                    // Create session
+                    // Create session form submission
                     $('#create-session-form').on('submit', function(e) {
                         e.preventDefault();
                         const formData = $(this).serialize();
-                        if (!$('#create_formation_id').val() || !$('#create_nom').val().trim() || !$('#create_teacher_id').val()) {
-                            showNotification('Les champs Formation, Nom et Enseignant sont requis.', 'warning');
+                        if (!$('#create_formation_id').val().trim() || !$('#create_nom').val().trim()) {
+                            showNotification('Les champs Formation et Nom sont requis.', 'warning');
                             return;
                         }
                         $.ajax({
@@ -855,8 +791,6 @@ try {
                                     showNotification(response.message || 'Session créée avec succès.', 'success');
                                     $('#createSessionModal').modal('hide');
                                     $('#create-session-form')[0].reset();
-                                    $('#create_responsible').val('');
-                                    $('#create_teacher_id').val(null).trigger('change');
                                     table.ajax.reload();
                                 } else {
                                     showNotification(response.message, 'error');
@@ -880,11 +814,11 @@ try {
                                 if (response.success) {
                                     const session = response.session;
                                     $('#view_id').text(session.id);
-                                    $('#view_formation').text(session.formation_nom + ' (' + session.formation_promotion + ')');
+                                    $('#view_formation').text(session.formation_nom && session.formation_promotion ? `${session.formation_nom} - ${session.formation_promotion}` : '-');
                                     $('#view_nom').text(session.nom);
+                                    $('#view_teacher').text(session.teacher_first_name && session.teacher_last_name ? `${session.teacher_first_name} ${session.teacher_last_name}` : 'Aucun');
                                     $('#view_date_session').text(session.date_session || '-');
-                                    $('#view_teacher').text(session.teacher_name || '-');
-                                    $('#view_responsible').text(session.responsible_name || '-');
+                                    $('#view_status').text(<?php echo json_encode($status_labels); ?>[session.status] || 'Inconnu');
                                     $('#viewSessionModal').modal('show');
                                 } else {
                                     showNotification(response.message, 'error');
@@ -910,9 +844,9 @@ try {
                                     $('#edit_id').val(session.id);
                                     $('#edit_formation_id').val(session.formation_id);
                                     $('#edit_nom').val(session.nom);
+                                    $('#edit_teacher_id').val(session.teacher_id || '');
                                     $('#edit_date_session').val(session.date_session || '');
-                                    $('#edit_teacher_id').val(session.teacher_id).trigger('change');
-                                    updateResponsible(session.formation_id, $('#edit_responsible'), $('#edit_responsible_id'));
+                                    $('#edit_status').val(session.status);
                                     $('#editSessionModal').modal('show');
                                 } else {
                                     showNotification(response.message, 'error');
@@ -928,8 +862,8 @@ try {
                     $('#edit-session-form').on('submit', function(e) {
                         e.preventDefault();
                         const formData = $(this).serialize();
-                        if (!$('#edit_formation_id').val() || !$('#edit_nom').val().trim() || !$('#edit_teacher_id').val()) {
-                            showNotification('Les champs Formation, Nom et Enseignant sont requis.', 'warning');
+                        if (!$('#edit_formation_id').val().trim() || !$('#edit_nom').val().trim()) {
+                            showNotification('Les champs Formation et Nom sont requis.', 'warning');
                             return;
                         }
                         $.ajax({
@@ -974,14 +908,6 @@ try {
                                 }
                             });
                         }
-                    });
-
-                    // Update responsible on formation change
-                    $('#create_formation_id').on('change', function() {
-                        updateResponsible($(this).val(), $('#create_responsible'), $('#create_responsible_id'));
-                    });
-                    $('#edit_formation_id').on('change', function() {
-                        updateResponsible($(this).val(), $('#edit_responsible'), $('#edit_responsible_id'));
                     });
 
                     // Modal z-index fix

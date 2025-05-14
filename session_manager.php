@@ -1,4 +1,3 @@
-```php
 <?php
 // session_manager.php
 
@@ -29,7 +28,10 @@ if (!isset($_SESSION['csrf_token'])) {
 
 // Function to validate CSRF token
 function validateCsrfToken($token) {
-    return isset($token) && $token === $_SESSION['csrf_token'];
+    if (!isset($token) || !isset($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $token)) {
+        throw new Exception("Jeton CSRF invalide.");
+    }
+    return true;
 }
 
 // Function to check if user is logged in
@@ -57,4 +59,3 @@ function destroySession() {
     setcookie(session_name(), '', time() - 3600, '/');
 }
 ?>
-```

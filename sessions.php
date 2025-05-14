@@ -4,7 +4,7 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-define('APP_START', true); // Define constant to allow session_manager access
+define('APP_START', true);
 require_once 'session_manager.php';
 require_once 'config.php';
 
@@ -13,8 +13,6 @@ requireLogin();
 
 // Log access
 logAction(getCurrentUserId(), "Accès à sessions.php", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
-
-// ... rest of the file remains unchanged, but update CSRF validation to use validateCsrfToken() ...
 
 // Initialize messages and filter
 $error = null;
@@ -53,17 +51,10 @@ $status_labels = [
     'cancelled' => 'Annulé'
 ];
 
-// Validate CSRF for POST requests
-function validateCsrfToken() {
-    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
-        throw new Exception("Jeton CSRF invalide.");
-    }
-}
-
 // Create Session
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'create' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
     try {
-        validateCsrfToken();
+        validateCsrfToken($_POST['csrf_token'] ?? '');
         $formation_id = filter_input(INPUT_POST, 'formation_id', FILTER_SANITIZE_STRING) ?? '';
         $teacher_id = filter_input(INPUT_POST, 'teacher_id', FILTER_SANITIZE_STRING) ?: null;
         $nom = filter_input(INPUT_POST, 'nom', FILTER_SANITIZE_STRING) ?? '';
@@ -100,11 +91,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $stmt->execute([$formation_id, $teacher_id, $nom, $date_session, $status]);
 
         $session_id = $db->lastInsertId();
-        logAction($_SESSION['user_id'], "Création session: $session_id (Formation: $formation_id, Nom: $nom, Statut: $status, Enseignant: " . ($teacher_id ?: 'Aucun') . ")", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction(getCurrentUserId(), "Création session: $session_id (Formation: $formation_id, Nom: $nom, Statut: $status, Enseignant: " . ($teacher_id ?: 'Aucun') . ")", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Session créée avec succès (ID: $session_id)."]);
     } catch (Exception $e) {
         error_log("Create session error: " . $e->getMessage());
-        logAction($_SESSION['user_id'], "Erreur création session: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction(getCurrentUserId(), "Erreur création session: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => htmlspecialchars($e->getMessage())]);
     }
@@ -114,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // Update Session
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update' && in_array($_SESSION['role'], ['admin', 'diacre'])) {
     try {
-        validateCsrfToken();
+        validateCsrfToken($_POST['csrf_token'] ?? '');
         $id = filter_input(INPUT_POST, 'id', FILTER_SANITIZE_STRING) ?? '';
         $formation_id = filter_input(INPUT_POST, 'formation_id', FILTER_SANITIZE_STRING) ?? '';
         $teacher_id = filter_input(INPUT_POST, 'teacher_id', FILTER_SANITIZE_STRING) ?: null;
@@ -159,11 +150,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         ");
         $stmt->execute([$formation_id, $teacher_id, $nom, $date_session, $status, $id]);
 
-        logAction($_SESSION['user_id'], "Mise à jour session: $id (Formation: $formation_id, Statut: $status, Enseignant: " . ($teacher_id ?: 'Aucun') . ")", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction(getCurrentUserId(), "Mise à jour session: $id (Formation: $formation_id, Statut: $status, Enseignant: " . ($teacher_id ?: 'Aucun') . ")", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Session mise à jour avec succès (ID: $id)."]);
     } catch (Exception $e) {
         error_log("Update session error: " . $e->getMessage());
-        logAction($_SESSION['user_id'], "Erreur mise à jour session: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction(getCurrentUserId(), "Erreur mise à jour session: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => htmlspecialchars($e->getMessage())]);
     }
@@ -173,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // Delete Session
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete' && $_SESSION['role'] === 'admin') {
     try {
-        validateCsrfToken();
+        validateCsrfToken($_POST['csrf_token'] ?? '');
         $id = filter_input(INPUT_POST, 'session_id', FILTER_SANITIZE_STRING) ?? '';
         if (empty($id)) throw new Exception("ID manquant.");
 
@@ -186,11 +177,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $stmt = $db->prepare("DELETE FROM sessions WHERE id = ?");
         $stmt->execute([$id]);
 
-        logAction($_SESSION['user_id'], "Suppression session: $id", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction(getCurrentUserId(), "Suppression session: $id", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         echo json_encode(['success' => true, 'message' => "Session supprimée (ID: $id)."]);
     } catch (Exception $e) {
         error_log("Delete session error: " . $e->getMessage());
-        logAction($_SESSION['user_id'], "Erreur suppression session: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+        logAction(getCurrentUserId(), "Erreur suppression session: " . $e->getMessage(), $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => htmlspecialchars($e->getMessage())]);
     }
@@ -200,7 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // Get Session Details
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'get_session') {
     try {
-        validateCsrfToken();
+        validateCsrfToken($_POST['csrf_token'] ?? '');
         $session_id = filter_input(INPUT_POST, 'session_id', FILTER_SANITIZE_STRING) ?? '';
         if (empty($session_id)) throw new Exception("ID manquant.");
 
@@ -609,7 +600,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
                         </div>
                     </div>
-               > </div>
+                </div>
             </div>
 
             <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>

@@ -12,7 +12,7 @@ require_once 'config.php';
 requireLogin();
 
 // Log access
-logAction(getCurrentUserId(), "Accès à formations.php (Gestion des Présences)", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
+logAction(getCurrentUserId(), "Accès à attendances.php", $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], php_uname('s'));
 
 // Initialize messages
 $error = null;
@@ -294,7 +294,7 @@ try {
 // Fetch summary of points per member
 try {
     $stmt = $db->prepare("
-        SELECT m.id, m.nom, m.prenom, COALESCE(SUM(a.points), 0) AS total_points
+        SELECT m.id, m.nom, m.prenom, SUM(a.points) AS total_points
         FROM members m
         LEFT JOIN formation_attendance a ON m.id = a.member_id
         GROUP BY m.id
@@ -356,9 +356,6 @@ try {
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
-        .table th, .table td {
-            vertical-align: middle;
-        }
         .modal-content {
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -411,11 +408,8 @@ try {
                     <a href="#" class="nav-link">Formations</a>
                     <ul class="nav flex-column sub-menu">
                         <li class="nav-item"><a href="promotions.php" class="nav-link">Promotions</a></li>
-                        <!-- Note: formations.php is labeled as Présences; consider renaming or moving to attendances.php -->
-                        <li class="nav-item"><a href="formations.php" class="nav-link active">Présences</a></li>
                         <li class="nav-item"><a href="sessions.php" class="nav-link">Sessions</a></li>
-                        <!-- If attendances.php is the primary attendance page, update this link -->
-                        <li class="nav-item"><a href="attendances.php" class="nav-link">Gestion des Présences</a></li>
+                        <li class="nav-item"><a href="attendances.php" class="nav-link active">Présences</a></li>
                     </ul>
                 </li>
                 <li class="nav-item"><a href="anniversaires.php" class="nav-link">Anniversaires</a></li>
@@ -459,8 +453,8 @@ try {
                 <form method="GET" id="filter-form">
                     <div class="row">
                         <div class="col-md-3">
-                            <div class="mb-3">
-                                <label for="filter_member" class="form-label">Membre</label>
+                            <div class="form-group">
+                                <label for="filter_member">Membre</label>
                                 <select class="form-select" id="filter_member" name="filter_member">
                                     <option value="">Tous</option>
                                     <?php foreach ($members as $member): ?>
@@ -472,8 +466,8 @@ try {
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="mb-3">
-                                <label for="filter_formation" class="form-label">Formation</label>
+                            <div class="form-group">
+                                <label for="filter_formation">Formation</label>
                                 <select class="form-select" id="filter_formation" name="filter_formation">
                                     <option value="">Toutes</option>
                                     <?php foreach ($formations as $formation): ?>
@@ -485,20 +479,20 @@ try {
                             </div>
                         </div>
                         <div class="col-md-2">
-                            <div class="mb-3">
-                                <label for="filter_date_start" class="form-label">Date Début</label>
+                            <div class="form-group">
+                                <label for="filter_date_start">Date Début</label>
                                 <input type="date" class="form-control" id="filter_date_start" name="filter_date_start" value="<?php echo htmlspecialchars($filter_date_start); ?>">
                             </div>
                         </div>
                         <div class="col-md-2">
-                            <div class="mb-3">
-                                <label for="filter_date_end" class="form-label">Date Fin</label>
+                            <div class="form-group">
+                                <label for="filter_date_end">Date Fin</label>
                                 <input type="date" class="form-control" id="filter_date_end" name="filter_date_end" value="<?php echo htmlspecialchars($filter_date_end); ?>">
                             </div>
                         </div>
                         <div class="col-md-2 d-flex align-items-end">
                             <button type="submit" class="btn btn-primary me-2">Filtrer</button>
-                            <a href="formations.php" class="btn btn-secondary">Réinitialiser</a>
+                            <a href="attendances.php" class="btn btn-secondary">Réinitialiser</a>
                         </div>
                     </div>
                 </form>
@@ -576,7 +570,7 @@ try {
                                 <tr>
                                     <td><?php echo htmlspecialchars($row['id']); ?></td>
                                     <td><?php echo htmlspecialchars($row['nom'] . ' ' . $row['prenom']); ?></td>
-                                    <td><?php echo htmlspecialchars($row['total_points']); ?></td>
+                                    <td><?php echo htmlspecialchars($row['total_points'] ?? '0'); ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -640,7 +634,7 @@ try {
                                     <div class="col-md-6">
                                         <div class="mb-3">
                                             <label for="create_present" class="form-label">Présent</label>
-                                            <input type="checkbox" class="form-check-input" id="create_present" name="present" checked>
+                                            <input type="checkbox" id="create_present" name="present" checked>
                                         </div>
                                     </div>
                                 </div>
@@ -711,7 +705,7 @@ try {
                                     <div class="col-md-6">
                                         <div class="mb-3">
                                             <label for="edit_present" class="form-label">Présent</label>
-                                            <input type="checkbox" class="form-check-input" id="edit_present" name="present">
+                                            <input type="checkbox" id="edit_present" name="present">
                                         </div>
                                     </div>
                                 </div>
@@ -791,15 +785,15 @@ try {
                         pageLength: 10,
                         responsive: true,
                         columnDefs: [
-                            { width: '5%', targets: 0 },
-                            { width: '15%', targets: 1 },
+                            { width: '10%', targets: 0 },
+                            { width: '20%', targets: 1 },
                             { width: '15%', targets: 2 },
                             { width: '10%', targets: 3 },
                             { width: '15%', targets: 4 },
                             { width: '10%', targets: 5 },
                             { width: '10%', targets: 6 },
                             { width: '10%', targets: 7 },
-                            { width: '15%', targets: 8, className: 'text-center' }
+                            { width: '150px', targets: 8, className: 'text-center' }
                         ]
                     });
 
@@ -811,7 +805,7 @@ try {
                             return;
                         }
                         $.ajax({
-                            url: 'formations.php',
+                            url: 'attendances.php',
                             type: 'POST',
                             data: { action: 'get_sessions', formation_id: formationId, csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>' },
                             dataType: 'json',
@@ -859,12 +853,12 @@ try {
                     $('#create-attendance-form').on('submit', function(e) {
                         e.preventDefault();
                         const formData = $(this).serialize();
-                        if (!$(this).find('[name="member_id"]').val() || !$(this).find('[name="formation_id"]').val() || !$(this).find('[name="session_id"]').val() || !$(this).find('[name="date_presence"]').val()) {
-                            showNotification('Tous les champs obligatoires doivent être remplis.', 'warning');
+                        if (!$(this).find('[name="member_id"]').val().trim() || !$(this).find('[name="formation_id"]').val().trim() || !$(this).find('[name="session_id"]').val().trim()) {
+                            showNotification('Les champs Membre, Formation et Session sont requis.', 'warning');
                             return;
                         }
                         $.ajax({
-                            url: 'formations.php',
+                            url: 'attendances.php',
                             type: 'POST',
                             data: formData,
                             dataType: 'json',
@@ -890,7 +884,7 @@ try {
                     $(document).on('click', '.view-attendance', function() {
                         const attendanceId = $(this).data('attendance-id');
                         $.ajax({
-                            url: 'formations.php',
+                            url: 'attendances.php',
                             type: 'POST',
                             data: { action: 'get_attendance', attendance_id: attendanceId, csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>' },
                             dataType: 'json',
@@ -920,7 +914,7 @@ try {
                     $(document).on('click', '.edit-attendance', function() {
                         const attendanceId = $(this).data('attendance-id');
                         $.ajax({
-                            url: 'formations.php',
+                            url: 'attendances.php',
                             type: 'POST',
                             data: { action: 'get_attendance', attendance_id: attendanceId, csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>' },
                             dataType: 'json',
@@ -959,12 +953,12 @@ try {
                     $('#edit-attendance-form').on('submit', function(e) {
                         e.preventDefault();
                         const formData = $(this).serialize();
-                        if (!$(this).find('[name="member_id"]').val() || !$(this).find('[name="formation_id"]').val() || !$(this).find('[name="session_id"]').val() || !$(this).find('[name="date_presence"]').val()) {
-                            showNotification('Tous les champs obligatoires doivent être remplis.', 'warning');
+                        if (!$(this).find('[name="member_id"]').val().trim() || !$(this).find('[name="formation_id"]').val().trim() || !$(this).find('[name="session_id"]').val().trim()) {
+                            showNotification('Les champs Membre, Formation et Session sont requis.', 'warning');
                             return;
                         }
                         $.ajax({
-                            url: 'formations.php',
+                            url: 'attendances.php',
                             type: 'POST',
                             data: formData,
                             dataType: 'json',
@@ -988,7 +982,7 @@ try {
                         const attendanceId = $(this).data('attendance-id');
                         if (confirm('Êtes-vous sûr de vouloir supprimer cette présence ?')) {
                             $.ajax({
-                                url: 'formations.php',
+                                url: 'attendances.php',
                                 type: 'POST',
                                 data: { action: 'delete', attendance_id: attendanceId, csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>' },
                                 dataType: 'json',
@@ -1027,7 +1021,7 @@ try {
                     // Refresh table on filter change
                     $('#filter-form').on('submit', function(e) {
                         e.preventDefault();
-                        location.href = 'formations.php?' + $(this).serialize();
+                        location.href = 'attendances.php?' + $(this).serialize();
                     });
                 });
             </script>

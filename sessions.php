@@ -357,7 +357,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                     <ul class="nav flex-column sub-menu">
                         <li class="nav-item"><a href="promotions.php" class="nav-link">Promotions</a></li>
                         <li class="nav-item"><a href="sessions.php" class="nav-link active">Sessions</a></li>
-                        <li class="nav-item"><a href="formations.php" class="nav-link">Présences</a></li>
+                        <li class="nav-item"><a href="formations.php?section=attendances" class="nav-link">Présences</a></li>
                     </ul>
                 </li>
                 <li class="nav-item"><a href="anniversaires.php" class="nav-link">Anniversaires</a></li>

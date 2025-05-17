@@ -539,7 +539,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                     <ul class="nav flex-column sub-menu">
                         <li class="nav-item"><a href="promotions.php" class="nav-link active">Promotions</a></li>
                         <li class="nav-item"><a href="sessions.php" class="nav-link">Sessions</a></li>
-                        <li class="nav-item"><a href="formations.php" class="nav-link">Présences</a></li>
+                        <li class="nav-item"><a href="formations.php?section=attendances" class="nav-link">Présences</a></li>
                     </ul>
                 </li>
                 <li class="nav-item"><a href="anniversaires.php" class="nav-link">Anniversaires</a></li>
@@ -564,7 +564,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
 
             <!-- Toast Notification Container -->
             <div class="toast-container position-fixed top-0 end-0 p-3">
-                <div id="notification-toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="true" data-bs-delay="5000">
+                <div id="notification-toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true" data-autohide="true" data-delay="5000">
                     <div class="toast-header">
                         <span id="toast-icon" class="me-2"></span>
                         <strong id="toast-title" class="me-auto"></strong>
@@ -639,36 +639,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                 <div class="row">
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="create_nom">Nom *</label>
-                                            <select class="form-control" id="create_nom" name="nom" required>
-                                                <option value="">Sélectionnez un nom</option>
-                                                <option value="Isoko Classe 1">Isoko Classe 1</option>
-                                                <option value="Isoko Classe 2">Isoko Classe 2</option>
-                                                <option value="Isoko Classe 3">Isoko Classe 3</option>
-                                            </select>
+                                            <label for="create_nom" class="form-label">Nom *</label>
+                                            <input type="text" class="form-control" id="create_nom" name="nom" required placeholder="ex: Leadership Spirituel">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="create_promotion">Promotion *</label>
-                                            <input type="text" class="form-control" id="create_promotion" name="promotion" required placeholder="ex: 2025-1">
+                                            <label for="create_promotion" class="form-label">Promotion *</label>
+                                            <input type="text" class="form-control" id="create_promotion" name="promotion" required placeholder="ex: 2023">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="create_date_debut">Date Début</label>
+                                            <label for="create_date_debut" class="form-label">Date Début</label>
                                             <input type="date" class="form-control" id="create_date_debut" name="date_debut">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="create_date_fin">Date Fin</label>
+                                            <label for="create_date_fin" class="form-label">Date Fin</label>
                                             <input type="date" class="form-control" id="create_date_fin" name="date_fin">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="create_responsible_id">Responsable *</label>
+                                            <label for="create_responsible_id" class="form-label">Responsable *</label>
                                             <select class="form-control" id="create_responsible_id" name="responsible_id" required>
                                                 <option value="">Sélectionnez un responsable</option>
                                                 <?php foreach ($responsible_members as $member): ?>
@@ -681,7 +676,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="create_status">Statut *</label>
+                                            <label for="create_status" class="form-label">Statut *</label>
                                             <select class="form-control" id="create_status" name="status" required>
                                                 <?php foreach ($status_labels as $value => $label): ?>
                                                     <option value="<?php echo htmlspecialchars($value); ?>" <?php echo $value === 'pending' ? 'selected' : ''; ?>>
@@ -719,36 +714,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                 <div class="row">
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="edit_nom">Nom *</label>
-                                            <select class="form-control" id="edit_nom" name="nom" required>
-                                                <option value="">Sélectionnez un nom</option>
-                                                <option value="Isoko Classe 1">Isoko Classe 1</option>
-                                                <option value="Isoko Classe 2">Isoko Classe 2</option>
-                                                <option value="Isoko Classe 3">Isoko Classe 3</option>
-                                            </select>
+                                            <label for="edit_nom" class="form-label">Nom *</label>
+                                            <input type="text" class="form-control" id="edit_nom" name="nom" required>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="edit_promotion">Promotion *</label>
+                                            <label for="edit_promotion" class="form-label">Promotion *</label>
                                             <input type="text" class="form-control" id="edit_promotion" name="promotion" required>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="edit_date_debut">Date Début</label>
+                                            <label for="edit_date_debut" class="form-label">Date Début</label>
                                             <input type="date" class="form-control" id="edit_date_debut" name="date_debut">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="edit_date_fin">Date Fin</label>
+                                            <label for="edit_date_fin" class="form-label">Date Fin</label>
                                             <input type="date" class="form-control" id="edit_date_fin" name="date_fin">
                                         </div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="edit_responsible_id">Responsable *</label>
+                                            <label for="edit_responsible_id" class="form-label">Responsable *</label>
                                             <select class="form-control" id="edit_responsible_id" name="responsible_id" required>
                                                 <option value="">Sélectionnez un responsable</option>
                                                 <?php foreach ($responsible_members as $member): ?>
@@ -761,7 +751,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-group">
-                                            <label for="edit_status">Statut *</label>
+                                            <label for="edit_status" class="form-label">Statut *</label>
                                             <select class="form-control" id="edit_status" name="status" required>
                                                 <?php foreach ($status_labels as $value => $label): ?>
                                                     <option value="<?php echo htmlspecialchars($value); ?>">
@@ -800,8 +790,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                             <p><strong>Date Fin:</strong> <span id="view_date_fin"></span></p>
                             <p><strong>Responsable:</strong> <span id="view_responsible"></span></p>
                             <p><strong>Statut:</strong> <span id="view_status"></span></p>
-                            <p><strong>Sessions (Enseignants):</strong> <span id="view_sessions"></span></p>
-                            <p><strong>Membres Inscrits:</strong> <span id="view_enrolled_members"></span></p>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-dismiss="modal">Fermer</button>
@@ -810,30 +798,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                 </div>
             </div>
 
-            <!-- Enroll Members Modal -->
-            <div class="modal fade" id="enrollMembersModal" tabindex="-1" role="dialog" aria-labelledby="enrollMembersModalLabel" aria-hidden="true">
+            <!-- Manage Members Modal -->
+            <div class="modal fade" id="manageMembersModal" tabindex="-1" role="dialog" aria-labelledby="manageMembersModalLabel" aria-hidden="true">
                 <div class="modal-dialog modal-lg" role="document">
                     <div class="modal-content">
                         <div class="modal-header bg-success text-white">
-                            <h5 class="modal-title" id="enrollMembersModalLabel">Gérer les Inscriptions</h5>
+                            <h5 class="modal-title" id="manageMembersModalLabel">Gérer les Membres Inscrits</h5>
                             <button type="button" class="close" data-dismiss="modal" aria-label="Close">
                                 <span aria-hidden="true">×</span>
                             </button>
                         </div>
                         <div class="modal-body">
-                            <input type="hidden" id="enroll_formation_id">
+                            <input type="hidden" id="manage_formation_id">
                             <h6>Inscrire des Membres</h6>
                             <div class="form-group">
-                                <label for="enroll_member_ids">Sélectionner les Membres *</label>
-                                <select class="form-control" id="enroll_member_ids" name="member_ids[]" multiple>
+                                <label for="enroll_members">Sélectionner les Membres</label>
+                                <select class="form-control" id="enroll_members" name="enroll_members" multiple style="height: 150px;">
                                     <?php foreach ($all_members as $member): ?>
                                         <option value="<?php echo htmlspecialchars($member['id']); ?>">
-                                            <?php echo htmlspecialchars($member['nom'] . ' ' . $member['prenom'] . ' (' . $member['id'] . ')'); ?>
+                                            <?php echo htmlspecialchars($member['nom'] . ' ' . $member['prenom']); ?>
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>
-                            <button type="button" class="btn btn-success mb-3" id="enroll-members-btn">Inscrire</button>
+                            <button type="button" id="enroll-members-btn" class="btn btn-success mb-3">Inscrire</button>
                             <h6>Membres Inscrits</h6>
                             <div id="enrolled-members-list"></div>
                         </div>
@@ -844,94 +832,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                 </div>
             </div>
 
-            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-            <script src="assets/bootstrap/js/bootstrap.min.js"></script>
+            <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+            <script src="assets/bootstrap/js/bootstrap.bundle.min.js"></script>
             <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
             <script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap4.min.js"></script>
             <script>
                 $(document).ready(function() {
-                    // Initialize DataTable with AJAX
-                    const table = $('#formation-table').DataTable({
-                        language: {
-                            url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/fr-FR.json'
-                        },
-                        order: [[2, 'desc']],
-                        autoWidth: false,
-                        columnDefs: [
-                            { width: '150px', targets: 9, className: 'text-center' },
-                            { width: '10%', targets: 0 },
-                            { width: '15%', targets: 1 },
-                            { width: '15%', targets: 2 },
-                            { width: '15%', targets: 3 },
-                            { width: '15%', targets: 4 },
-                            { width: '15%', targets: 5 },
-                            { width: '15%', targets: 6 },
-                            { width: '15%', targets: 7 },
-                            { width: '10%', targets: 8 }
-                        ],
-                        ajax: {
-                            url: 'promotions.php?ajax=1',
-                            type: 'GET',
-                            data: function(d) {
-                                d.filter_status = $('#filter_status').val();
-                            },
-                            dataSrc: 'formations'
-                        },
-                        columns: [
-                            { data: 'id' },
-                            { data: 'nom' },
-                            { data: 'promotion' },
-                            { data: 'date_debut', render: function(data) { return data || '-'; } },
-                            { data: 'date_fin', render: function(data) { return data || '-'; } },
-                            { 
-                                data: null, 
-                                render: function(data) { 
-                                    return data.responsible_nom && data.responsible_prenom 
-                                        ? `${data.responsible_nom} ${data.responsible_prenom}` 
-                                        : '-'; 
-                                } 
-                            },
-                            { 
-                                data: 'status', 
-                                render: function(data) { 
-                                    const labels = <?php echo json_encode($status_labels); ?>;
-                                    return labels[data] || 'Inconnu'; 
-                                } 
-                            },
-                            { 
-                                data: null, 
-                                render: function(data) { 
-                                    return `${data.session_count} (${data.teacher_assigned_count} enseignant${data.teacher_assigned_count !== 1 ? 's' : ''})`; 
-                                } 
-                            },
-                            { 
-                                data: 'enrolled_member_count', 
-                                render: function(data) { 
-                                    return data || '0'; 
-                                } 
-                            },
-                            {
-                                data: null,
-                                render: function(data, type, row) {
-                                    let actions = `
-                                        <div class="action-buttons">
-                                            <button class="btn btn-sm btn-info view-formation" data-formation-id="${row.id}">Voir</button>
-                                    `;
-                                    <?php if (in_array($_SESSION['role'], ['admin', 'diacre'])): ?>
-                                        actions += `<button class="btn btn-sm btn-success enroll-members" data-formation-id="${row.id}">Inscriptions</button>`;
-                                        actions += `<button class="btn btn-sm btn-warning edit-formation" data-formation-id="${row.id}">Modifier</button>`;
-                                    <?php endif; ?>
-                                    <?php if ($_SESSION['role'] === 'admin'): ?>
-                                        actions += `<button class="btn btn-sm btn-danger delete-formation" data-formation-id="${row.id}">Supprimer</button>`;
-                                    <?php endif; ?>
-                                    actions += `</div>`;
-                                    return actions;
-                                }
-                            }
-                        ]
-                    });
-
-                    // Show notification
+                    // Notification function
                     function showNotification(message, type = 'success') {
                         const toast = $('#notification-toast');
                         const icon = $('#toast-icon');
@@ -959,70 +866,116 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         toast.toast('show');
                     }
 
-                    // Load enrolled members
-                    function loadEnrolledMembers(formationId) {
-                        $.ajax({
-                            url: 'promotions.php',
-                            type: 'POST',
-                            data: { action: 'get_enrolled_members', formation_id: formationId },
-                            dataType: 'json',
-                            success: function(response) {
-                                if (response.success) {
-                                    let html = '';
-                                    if (response.enrolled_members.length === 0) {
-                                        html = '<p>Aucun membre inscrit.</p>';
-                                    } else {
-                                        response.enrolled_members.forEach(function(member) {
-                                            html += `
-                                                <div class="enrolled-member">
-                                                    <span>${member.nom} ${member.prenom} (${member.id})</span>
-                                                    <button class="btn btn-sm btn-danger unenroll-member" data-member-id="${member.id}">Désinscrire</button>
-                                                </div>
-                                            `;
-                                        });
-                                    }
-                                    $('#enrolled-members-list').html(html);
-                                } else {
-                                    showNotification(response.message, 'error');
-                                    $('#enrolled-members-list').html('<p>Erreur de chargement.</p>');
+                    // Initialize DataTable
+                    const table = $('#formation-table').DataTable({
+                        language: { url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/fr-FR.json' },
+                        order: [[2, 'desc']],
+                        pageLength: 10,
+                        responsive: true,
+                        columnDefs: [
+                            { width: '150px', targets: 9, className: 'text-center' },
+                            { width: '10%', targets: 0 },
+                            { width: '15%', targets: 1 },
+                            { width: '10%', targets: 2 },
+                            { width: '10%', targets: 3 },
+                            { width: '10%', targets: 4 },
+                            { width: '15%', targets: 5 },
+                            { width: '10%', targets: 6 },
+                            { width: '10%', targets: 7 },
+                            { width: '10%', targets: 8 }
+                        ],
+                        ajax: {
+                            url: 'promotions.php?ajax=1',
+                            type: 'GET',
+                            data: function(d) {
+                                d.filter_status = $('#filter_status').val();
+                            },
+                            dataSrc: 'formations'
+                        },
+                        columns: [
+                            { data: 'id' },
+                            { data: 'nom' },
+                            { data: 'promotion' },
+                            { data: 'date_debut', render: function(data) { return data || '-'; } },
+                            { data: 'date_fin', render: function(data) { return data || '-'; } },
+                            {
+                                data: null,
+                                render: function(data) {
+                                    return data.responsible_nom && data.responsible_prenom
+                                        ? `${data.responsible_nom} ${data.responsible_prenom}`
+                                        : '-';
                                 }
                             },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors du chargement des membres : ' + (xhr.responseJSON?.message || error), 'error');
-                                $('#enrolled-members-list').html('<p>Erreur de chargement.</p>');
+                            {
+                                data: 'status',
+                                render: function(data) {
+                                    const labels = <?php echo json_encode($status_labels); ?>;
+                                    return labels[data] || 'Inconnu';
+                                }
+                            },
+                            {
+                                data: null,
+                                render: function(data) {
+                                    return `${data.session_count} (${data.teacher_assigned_count} avec enseignant)`;
+                                }
+                            },
+                            { data: 'enrolled_member_count', render: function(data) { return data || '0'; } },
+                            {
+                                data: null,
+                                render: function(data, type, row) {
+                                    let actions = `
+                                        <div class="action-buttons">
+                                            <button class="btn btn-sm btn-info view-formation" data-formation-id="${row.id}">Voir</button>
+                                    `;
+                                    <?php if (in_array($_SESSION['role'], ['admin', 'diacre'])): ?>
+                                        actions += `
+                                            <button class="btn btn-sm btn-warning edit-formation" data-formation-id="${row.id}">Modifier</button>
+                                            <button class="btn btn-sm btn-success manage-members" data-formation-id="${row.id}">Membres</button>
+                                        `;
+                                    <?php endif; ?>
+                                    <?php if ($_SESSION['role'] === 'admin'): ?>
+                                        actions += `<button class="btn btn-sm btn-danger delete-formation" data-formation-id="${row.id}">Supprimer</button>`;
+                                    <?php endif; ?>
+                                    actions += `</div>`;
+                                    return actions;
+                                }
                             }
+                        ]
+                    });
+
+                    // Form validation and submission
+                    function handleFormSubmission(formId, url, successMessage, modalId) {
+                        $(formId).on('submit', function(e) {
+                            e.preventDefault();
+                            const formData = $(this).serialize();
+                            if (!$(`${formId} [name="nom"]`).val().trim() || !$(`${formId} [name="promotion"]`).val().trim() || !$(`${formId} [name="responsible_id"]`).val()) {
+                                showNotification('Les champs Nom, Promotion et Responsable sont requis.', 'warning');
+                                return;
+                            }
+                            $.ajax({
+                                url: url,
+                                type: 'POST',
+                                data: formData,
+                                dataType: 'json',
+                                success: function(response) {
+                                    if (response.success) {
+                                        showNotification(response.message || successMessage, 'success');
+                                        $(modalId).modal('hide');
+                                        $(formId)[0].reset();
+                                        table.ajax.reload();
+                                    } else {
+                                        showNotification(response.message, 'error');
+                                    }
+                                },
+                                error: function(xhr) {
+                                    showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
+                                }
+                            });
                         });
                     }
 
-                    // Create formation form submission
-                    $('#create-formation-form').on('submit', function(e) {
-                        e.preventDefault();
-                        const formData = $(this).serialize();
-                        if (!$('#create_nom').val().trim() || !$('#create_promotion').val().trim() || 
-                            !$('#create_responsible_id').val().trim()) {
-                            showNotification('Les champs Nom, Promotion et Responsable sont requis.', 'warning');
-                            return;
-                        }
-                        $.ajax({
-                            url: 'promotions.php',
-                            type: 'POST',
-                            data: formData,
-                            dataType: 'json',
-                            success: function(response) {
-                                if (response.success) {
-                                    showNotification(response.message || 'Formation créée avec succès.', 'success');
-                                    $('#createFormationModal').modal('hide');
-                                    $('#create-formation-form')[0].reset();
-                                    table.ajax.reload();
-                                } else {
-                                    showNotification(response.message, 'error');
-                                }
-                            },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors de la création : ' + (xhr.responseJSON?.message || error), 'error');
-                            }
-                        });
-                    });
+                    handleFormSubmission('#create-formation-form', 'promotions.php', 'Formation créée avec succès.', '#createFormationModal');
+                    handleFormSubmission('#edit-formation-form', 'promotions.php', 'Formation mise à jour avec succès.', '#editFormationModal');
 
                     // View formation
                     $(document).on('click', '.view-formation', function() {
@@ -1042,15 +995,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     $('#view_date_fin').text(formation.date_fin || '-');
                                     $('#view_responsible').text(formation.responsible_nom && formation.responsible_prenom ? `${formation.responsible_nom} ${formation.responsible_prenom}` : '-');
                                     $('#view_status').text(<?php echo json_encode($status_labels); ?>[formation.status] || 'Inconnu');
-                                    $('#view_sessions').text(`${formation.session_count} (${formation.teacher_assigned_count} enseignant${formation.teacher_assigned_count !== 1 ? 's' : ''})`);
-                                    $('#view_enrolled_members').text(formation.enrolled_member_count || '0');
                                     $('#viewFormationModal').modal('show');
                                 } else {
                                     showNotification(response.message, 'error');
                                 }
                             },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors de la récupération : ' + (xhr.responseJSON?.message || error), 'error');
+                            error: function(xhr) {
+                                showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
                             }
                         });
                     });
@@ -1071,44 +1022,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                     $('#edit_promotion').val(formation.promotion);
                                     $('#edit_date_debut').val(formation.date_debut || '');
                                     $('#edit_date_fin').val(formation.date_fin || '');
-                                    $('#edit_status').val(formation.status);
                                     $('#edit_responsible_id').val(formation.responsible_id);
+                                    $('#edit_status').val(formation.status);
                                     $('#editFormationModal').modal('show');
                                 } else {
                                     showNotification(response.message, 'error');
                                 }
                             },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors de la récupération : ' + (xhr.responseJSON?.message || error), 'error');
-                            }
-                        });
-                    });
-
-                    // Update formation
-                    $('#edit-formation-form').on('submit', function(e) {
-                        e.preventDefault();
-                        const formData = $(this).serialize();
-                        if (!$('#edit_nom').val().trim() || !$('#edit_promotion').val().trim() || 
-                            !$('#edit_responsible_id').val().trim()) {
-                            showNotification('Les champs Nom, Promotion et Responsable sont requis.', 'warning');
-                            return;
-                        }
-                        $.ajax({
-                            url: 'promotions.php',
-                            type: 'POST',
-                            data: formData,
-                            dataType: 'json',
-                            success: function(response) {
-                                if (response.success) {
-                                    showNotification(response.message || 'Formation mise à jour avec succès.', 'success');
-                                    $('#editFormationModal').modal('hide');
-                                    table.ajax.reload();
-                                } else {
-                                    showNotification(response.message, 'error');
-                                }
-                            },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors de la mise à jour : ' + (xhr.responseJSON?.message || error), 'error');
+                            error: function(xhr) {
+                                showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
                             }
                         });
                     });
@@ -1130,26 +1052,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                         showNotification(response.message, 'error');
                                     }
                                 },
-                                error: function(xhr, status, error) {
-                                    showNotification('Erreur serveur lors de la suppression : ' + (xhr.responseJSON?.message || error), 'error');
+                                error: function(xhr) {
+                                    showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
                                 }
                             });
                         }
                     });
 
-                    // Enroll members modal
-                    $(document).on('click', '.enroll-members', function() {
+                    // Manage members
+                    $(document).on('click', '.manage-members', function() {
                         const formationId = $(this).data('formation-id');
-                        $('#enroll_formation_id').val(formationId);
-                        $('#enroll_member_ids').val([]);
+                        $('#manage_formation_id').val(formationId);
                         loadEnrolledMembers(formationId);
-                        $('#enrollMembersModal').modal('show');
+                        $('#manageMembersModal').modal('show');
                     });
 
-                    // Enroll members button
+                    // Load enrolled members
+                    function loadEnrolledMembers(formationId) {
+                        $.ajax({
+                            url: 'promotions.php',
+                            type: 'POST',
+                            data: { action: 'get_enrolled_members', formation_id: formationId },
+                            dataType: 'json',
+                            success: function(response) {
+                                if (response.success) {
+                                    const members = response.enrolled_members;
+                                    const list = $('#enrolled-members-list');
+                                    list.empty();
+                                    if (members.length === 0) {
+                                        list.append('<p>Aucun membre inscrit.</p>');
+                                    } else {
+                                        members.forEach(member => {
+                                            list.append(`
+                                                <div class="enrolled-member">
+                                                    <span>${member.nom} ${member.prenom}</span>
+                                                    <button class="btn btn-sm btn-danger unenroll-member" data-member-id="${member.id}">Désinscrire</button>
+                                                </div>
+                                            `);
+                                        });
+                                    }
+                                } else {
+                                    showNotification(response.message, 'error');
+                                }
+                            },
+                            error: function(xhr) {
+                                showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
+                            }
+                        });
+                    }
+
+                    // Enroll members
                     $('#enroll-members-btn').on('click', function() {
-                        const formationId = $('#enroll_formation_id').val();
-                        const memberIds = $('#enroll_member_ids').val();
+                        const formationId = $('#manage_formation_id').val();
+                        const memberIds = $('#enroll_members').val();
                         if (!memberIds || memberIds.length === 0) {
                             showNotification('Veuillez sélectionner au moins un membre.', 'warning');
                             return;
@@ -1157,40 +1112,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                         $.ajax({
                             url: 'promotions.php',
                             type: 'POST',
-                            data: { 
-                                action: 'enroll_members', 
-                                formation_id: formationId, 
-                                member_ids: memberIds 
+                            data: {
+                                action: 'enroll_members',
+                                formation_id: formationId,
+                                member_ids: memberIds
                             },
                             dataType: 'json',
                             success: function(response) {
                                 if (response.success) {
                                     showNotification(response.message, 'success');
                                     loadEnrolledMembers(formationId);
-                                    $('#enroll_member_ids').val([]);
-                                    table.ajax.reload();
+                                    $('#enroll_members').val([]);
                                 } else {
                                     showNotification(response.message, 'error');
                                 }
                             },
-                            error: function(xhr, status, error) {
-                                showNotification('Erreur serveur lors de l\'inscription : ' + (xhr.responseJSON?.message || error), 'error');
+                            error: function(xhr) {
+                                showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
                             }
                         });
                     });
 
                     // Unenroll member
                     $(document).on('click', '.unenroll-member', function() {
-                        const formationId = $('#enroll_formation_id').val();
+                        const formationId = $('#manage_formation_id').val();
                         const memberId = $(this).data('member-id');
                         if (confirm('Êtes-vous sûr de vouloir désinscrire ce membre ?')) {
                             $.ajax({
                                 url: 'promotions.php',
                                 type: 'POST',
-                                data: { 
-                                    action: 'unenroll_members', 
-                                    formation_id: formationId, 
-                                    member_ids: [memberId] 
+                                data: {
+                                    action: 'unenroll_members',
+                                    formation_id: formationId,
+                                    member_ids: [memberId]
                                 },
                                 dataType: 'json',
                                 success: function(response) {
@@ -1202,8 +1156,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax'])) {
                                         showNotification(response.message, 'error');
                                     }
                                 },
-                                error: function(xhr, status, error) {
-                                    showNotification('Erreur serveur lors de la désinscription : ' + (xhr.responseJSON?.message || error), 'error');
+                                error: function(xhr) {
+                                    showNotification('Erreur serveur : ' + (xhr.responseJSON?.message || 'Erreur inconnue'), 'error');
                                 }
                             });
                         }
